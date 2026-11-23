@@ -13,3 +13,8 @@ header = "software_licensing.h"
 [windows_bindings]
 packages = ["software-licensing-ffi"]
 projects = ["bindings/dotnet/tests/SoftwareLicensing.Tests/SoftwareLicensing.Tests.csproj"]
+
+[nuget]
+package_id = "NaviApps.SoftwareLicensing"
+fixtures = ["fixtures/consumers/dotnet/Program.cs"]
+windows_x64 = true

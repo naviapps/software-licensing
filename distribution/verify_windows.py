@@ -3,6 +3,7 @@
 
 import argparse
 import platform
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -22,11 +23,33 @@ def acceptance_source():
     return load("windows_delivery").acceptance_source(ROOT, match_actions=True)
 
 
+def export_native(built, inventory, artifact_root, artifacts):
+    destination = artifact_root / "sdk-windows" / RID
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if (
+        destination.exists()
+        or destination.is_symlink()
+        or not destination.parent.resolve().is_relative_to(artifact_root.resolve())
+    ):
+        raise ValueError("Windows native export requires a new directory inside the artifact root")
+    with tempfile.TemporaryDirectory(dir=destination.parent, prefix="native-export-") as directory:
+        staged = Path(directory) / RID
+        shutil.copytree(built, staged, symlinks=True)
+        if artifacts.hashes(artifacts.files(staged), staged) != inventory:
+            raise ValueError("Exported Windows files differ from the accepted native build")
+        staged.rename(destination)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--architecture", choices=("x64",), default="x64")
     parser.add_argument(
         "--native-aot", action="store_true", help="Publish and run the win-x64 Native AOT consumer"
+    )
+    parser.add_argument(
+        "--export-native",
+        action="store_true",
+        help="Export the accepted Windows build for the combined NuGet package",
     )
     args = parser.parse_args(argv)
     if sys.platform != "win32" or sys.getwindowsversion().build < 26100:
@@ -39,6 +62,8 @@ def main(argv=None):
     acceptance = X64Acceptance(ROOT)
     env, dotnet = acceptance.env, acceptance.dotnet
     artifact_root = load("vm_environment").artifacts_dir(env)
+    if args.export_native and artifact_root is None:
+        parser.error("--export-native requires an owned artifact directory")
     native = ffi_product(ROOT, factory=load("ffi").FfiProduct)
     built = acceptance.build(native)
     output = ROOT / ".native-build"
@@ -143,14 +168,23 @@ def main(argv=None):
         }
         if args.native_aot:
             receipt["nativeAotFixtureExecuted"] = True
-        publish_x64(
-            package,
-            receipt,
-            receipt_name=RECEIPT,
-            output_dir=output,
-            artifact_root=artifact_root,
-            tooling=artifacts,
-        )
+        if args.export_native:
+            with artifacts.build_lock(output):
+                export_native(
+                    built,
+                    native_receipt["outputs"] | {"native-build.json": receipt_digest},
+                    artifact_root,
+                    artifacts,
+                )
+        else:
+            publish_x64(
+                package,
+                receipt,
+                receipt_name=RECEIPT,
+                output_dir=output,
+                artifact_root=artifact_root,
+                tooling=artifacts,
+            )
     print(f"Windows x64 SoftwareLicensing acceptance passed on {acceptance.host}.")
 
 

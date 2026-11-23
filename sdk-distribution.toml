@@ -9,5 +9,8 @@ commands = [
 commands = [
   ["rustup", "install", "--no-self-update"],
   ["sdk-tooling", "python", "-m", "unittest", "discover", "-s", "distribution/tests"],
-  ["sdk-tooling", "windows", "distribution/verify_windows.py", "--native-aot"],
+  ["sdk-tooling", "windows", "distribution/verify_windows.py", "--native-aot", "--export-native"],
 ]
+
+[nuget]
+pack = "distribution/pack_nuget.py"

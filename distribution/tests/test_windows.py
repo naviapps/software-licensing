@@ -54,6 +54,7 @@ def artifacts():
             for path in files
         },
         write_json=lambda path, value: path.write_text(json.dumps(value)),
+        files=load("artifacts").files,
         publish=publish,
     )
 
@@ -83,6 +84,27 @@ class WindowsOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             self.exercise_driver(Path(temporary), change_tools=True)
 
+    def test_exports_only_the_verified_windows_native_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.exercise_driver(Path(temporary), host="x64", retain=True, export=True)
+
+    def test_export_does_not_accept_native_bytes_changed_after_validation(self):
+        driver = load_driver()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            built = root / "built"
+            built.mkdir()
+            library = built / "software_licensing.dll"
+            library.write_bytes(b"accepted library")
+            tooling = artifacts()
+            inventory = tooling.hashes([library], built)
+            library.write_bytes(b"changed library")
+
+            output = root / "artifacts"
+            with self.assertRaisesRegex(ValueError, "differ from the accepted native build"):
+                driver.export_native(built, inventory, output, tooling)
+            self.assertEqual(tuple((output / "sdk-windows").iterdir()), ())
+
     def test_rejects_captured_source_for_a_different_actions_revision(self):
         driver = load_driver()
         with patch.object(driver, "load", return_value=load("windows_delivery")):
@@ -108,6 +130,7 @@ class WindowsOutputTests(unittest.TestCase):
         mutate=False,
         change_tools=False,
         native_aot=False,
+        export=False,
     ):
         driver = load_driver()
         fixture = root / "fixtures/consumers/dotnet/Program.cs"
@@ -242,7 +265,10 @@ class WindowsOutputTests(unittest.TestCase):
                     driver.main([])
                 self.assertFalse((output / driver.RID).exists())
                 return
-            driver.main(["--native-aot"] if native_aot else [])
+            arguments = ["--native-aot"] if native_aot else []
+            if export:
+                arguments.append("--export-native")
+            driver.main(arguments)
 
         expected_environment = dict(environment)
         expected_environment.pop("Dotnet_Host_Path")
@@ -298,6 +324,16 @@ class WindowsOutputTests(unittest.TestCase):
         self.assertIn(built, fixture_call["exclude_paths"])
         self.assertIn(candidate, fixture_call["exclude_paths"])
         self.assertFalse(fixture_call.get("clear_environment"))
+
+        if export:
+            retained = ci / "sdk-windows" / driver.RID
+            self.assertEqual(
+                artifacts().hashes(artifacts().files(retained), retained),
+                artifacts().hashes(artifacts().files(built), built),
+            )
+            self.assertFalse(tuple(ci.rglob("*.nupkg")))
+            self.assertFalse((output / driver.RID).exists())
+            return
 
         local = output / driver.RID / native.version
         retained = json.loads((local / driver.RECEIPT).read_bytes())

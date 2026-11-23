@@ -10,13 +10,17 @@
     <Description>Rust-backed license lifecycle, transactional persistence and recovery.</Description>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <SoftwareLicensingNativeAssets Condition="'$(SoftwareLicensingNativeAssets)' == ''">../../runtimes</SoftwareLicensingNativeAssets>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <SdkNativeRuntimeAssets Condition="'$(SdkNativeRuntimeAssets)' == ''">$(SoftwareLicensingNativeAssets)</SdkNativeRuntimeAssets>
+    <IsPackable Condition="'$(SdkNativeRuntimeAssets)' == ''">false</IsPackable>
     <PublishRepositoryUrl>false</PublishRepositoryUrl>
     <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="$(SoftwareLicensingNativeAssets)/**/*" Pack="true" PackagePath="runtimes/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="$(SdkNativeRuntimeAssets)/**/*" Condition="'$(SdkNativeRuntimeAssets)' != ''"
+          Pack="true" PackagePath="runtimes/%(RecursiveDir)%(Filename)%(Extension)" />
     <None Include="$(SoftwareLicensingNativeLibrary)" Condition="'$(SoftwareLicensingNativeLibrary)' != ''"
           CopyToOutputDirectory="Always" Pack="false">
       <Link Condition="'$(OS)' == 'Windows_NT'">software_licensing.dll</Link>

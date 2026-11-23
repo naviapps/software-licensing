@@ -44,8 +44,8 @@ The SDK does not implement checkout, billing, merchant APIs or license issuance.
 
 - Swift 6.3 and macOS 26 or later. The universal framework supports ARM64 and Intel.
 - Rust 1.99.1. See `rust-toolchain.toml` and the locked registry dependencies.
-- .NET 10. The Windows package supplies `win-x64` and is tested with x64 .NET
-  under emulation on Windows 11 ARM64 (build 26100 or later).
+- .NET 10. One NuGet package supplies `osx-arm64`, `osx-x64` and `win-x64`.
+  Use x64 .NET under emulation on Windows 11 ARM64 (build 26100 or later).
 
 `Package.swift` exposes `SoftwareLicensing` and `SoftwareLicensingKeychain`.
 The [.NET guide](https://github.com/naviapps/software-licensing/blob/main/bindings/dotnet/README.md)
@@ -446,9 +446,10 @@ checks use synthetic fixture providers.
 
 Run `mise exec -- make check-distribution` for native provenance,
 C ownership under AddressSanitizer, .NET and isolated NuGet consumers, and
-portable build-driver tests. The macOS check packages the checked-in framework
-and the Windows check packages a freshly built x64 DLL. Both fixtures load the
-packaged library through the runtime. Reuse the pinned tooling for `make native`
+portable build-driver tests. The local fixtures exercise each platform's library.
+The GitHub distribution check creates one NuGet from the verified Windows x64 DLL
+and the universal macOS framework, then installs the same package on macOS and
+Windows. Reuse the pinned tooling for `make native`
 after changing native inputs and for `make native-verify`. [`native.toml`](native.toml)
 selects the FFI artifact and records its build policy.
 
@@ -462,8 +463,11 @@ SDK Tooling repository. Run this from the intended commit on `main`:
 
 ```sh
 gh workflow run check-sdk-distribution.yml -R naviapps/sdk-tooling \
-  -f sdk=software-licensing -f "revision=$(git rev-parse HEAD)"
+  -f sdk=software-licensing -f "revision=$(git rev-parse HEAD)" -f windows-on-arm=true
 ```
+
+Download the combined `software-licensing-nuget-<revision>-<attempt>` artifact
+from a successful run and follow the [.NET installation guide](bindings/dotnet/README.md#installation).
 
 ## Static checks
 

@@ -33,17 +33,15 @@ static async Task VerifyLifecycle(ILicenseStorage storage)
 }
 
 await VerifyLifecycle(new MemoryStorage());
-#if NATIVE_AOT_FIXTURE
 if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 26100))
 {
-    var directory = Directory.CreateTempSubdirectory("software-licensing-aot-");
+    var directory = Directory.CreateTempSubdirectory("software-licensing-consumer-");
     try
     {
         await VerifyLifecycle(new WindowsLicenseStorage(directory.FullName, "com.example.standalone"));
     }
     finally { directory.Delete(recursive: true); }
 }
-#endif
 Console.WriteLine("SoftwareLicensing external NuGet consumer passed.");
 
 sealed class MemoryStorage : ILicenseStorage

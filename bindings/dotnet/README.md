@@ -1,14 +1,17 @@
-# Windows NuGet package
+# SoftwareLicensing for .NET
 
 ## Installation
 
-`NaviApps.SoftwareLicensing` targets .NET 10 and supplies a `win-x64` native
-asset. Use the x64 .NET SDK on Windows x64 or under emulation on Windows 11 ARM64
-(build 26100 or later). Check that `dotnet --info` reports x64 before continuing.
+`NaviApps.SoftwareLicensing` targets .NET 10 and supplies native assets for
+macOS 26 or later on ARM64 or Intel, Windows x64, and Windows 11 ARM64 through x64
+emulation (build 26100 or later). Choose the .NET SDK that matches your macOS
+architecture, or the x64 .NET SDK on Windows. Check the architecture with
+`dotnet --info`.
 
-Use the [Windows package acceptance command](#windows-package-acceptance) to
-produce a local package and `software-licensing-windows.json` receipt. Verify the
-package's SHA-256 against the receipt and use its directory as a local NuGet source.
+Download the combined NuGet artifact from an exact-revision
+[distribution check](../../README.md#distribution-checks). Verify the package's
+SHA-256 against the accompanying `.nupkg.json` receipt and use its directory
+as a local NuGet source.
 
 In an empty consumer directory, select the exact package version and replace
 `C:\owned\packages` with the directory containing the verified package.
@@ -65,20 +68,21 @@ mise run sdk-tooling -- python distribution/verify_windows.py --architecture x64
 ```
 
 This verifies a single DLL across C, .NET recovery and DPAPI fixtures, and the
-isolated NuGet consumer. The package and receipt are retained together under
-`.native-build/win-x64/<version>/`. Point local package restore at that directory.
-When `VM_RUNNER_ARTIFACTS_DIR` is supplied, the same files are also retained there
-under `win-x64/<version>/`.
-The receipt records the SDK and shared build helper hashes. The GitHub-hosted
-distribution job runs on x64 and publishes the isolated consumer with Native AOT
-from the same audited package. It runs activation, persistence and reopen,
-refresh, and deactivation with JSON reflection disabled, using both in-memory
-storage and temporary current-user DPAPI storage. The receipt records a successful
-run in `nativeAotFixtureExecuted`.
+isolated NuGet consumer. The Windows-only verification package and its receipt
+are retained under `.native-build/win-x64/<version>/` and, when configured,
+under `win-x64/<version>/` in `VM_RUNNER_ARTIFACTS_DIR`. The receipt records
+the SDK and shared build helper hashes.
+
+The hosted Windows distribution check runs the isolated consumer with Native AOT
+and JSON reflection disabled before exporting the same DLL for the combined
+package. The fixture exercises activation, persistence and reopen, refresh, and
+deactivation using in-memory storage and temporary current-user DPAPI storage.
+The combined package runs the same lifecycle fixture after restore.
 
 On an owned x64 Windows worker with the Visual Studio C++ workload, append
 `--native-aot` to the acceptance command to run the same check. On Windows ARM64,
-run the standard command to verify x64 emulation.
+run the standard command to verify x64 emulation. For local Native AOT checks,
+the Windows acceptance receipt records success in `nativeAotFixtureExecuted`.
 
 ### macOS checks
 
