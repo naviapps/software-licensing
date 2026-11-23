@@ -1,7 +1,8 @@
 import Foundation
-import SoftwareLicensing
 import Synchronization
 import Testing
+
+@testable import SoftwareLicensing
 
 private final class MemoryStorage: @unchecked Sendable, LicenseStorage {
   var data: Data?
@@ -61,6 +62,74 @@ private final class ValidationClock: Sendable {
     return result
   }
   func deactivate(_: LicenseActivation) async throws {}
+}
+
+@MainActor private final class NativeProviderSession: LicenseSessionDriver {
+  private let core = LicenseSession()
+  private let onProvider: () -> Void
+  private let activation: LicenseActivation
+  private(set) var requests: [UInt64] = []
+  private(set) var completions: [UInt64] = []
+  private(set) var completionWasCancelled = false
+
+  init(activation: LicenseActivation, onProvider: @escaping () -> Void) {
+    self.activation = activation
+    self.onProvider = onProvider
+  }
+
+  func dispatch(_ command: Data) throws -> Data {
+    let command = try #require(JSONSerialization.jsonObject(with: command) as? [String: Any])
+    let reply = try core.dispatch(command)
+    var object = try #require(JSONSerialization.jsonObject(with: reply) as? [String: Any])
+    guard let effect = object["effect"] as? [String: Any], effect["kind"] as? String == "provider"
+    else { return reply }
+    object["effect"] = ["kind": "provider", "id": try #require(effect["id"])]
+    return try JSONSerialization.data(withJSONObject: object)
+  }
+
+  func stageStoredRecord(_ record: Data) throws { try core.stageStoredRecord(record) }
+
+  func executeProviderEffect(_ id: UInt64) async throws {
+    requests.append(id)
+    onProvider()
+  }
+
+  func completeProviderEffect(_ id: UInt64, now: TimeInterval, cancelled: Bool) throws -> Data {
+    completions.append(id)
+    completionWasCancelled = cancelled
+    return try core.dispatch([
+      "command": "provider", "id": id, "now": now,
+      "result": ["kind": "activated", "activation": LicensingNative.object(activation)],
+    ])
+  }
+}
+
+@Test @MainActor private func nativeProviderCompletionSurvivesCancellationAndInvalidClock()
+  async throws
+{
+  let activation = try await ValidationProvider().activate(.licenseKey("TEST-KEY"))
+  let clock = ValidationClock()
+  let storage = MemoryStorage()
+  var initialDriver: NativeProviderSession?
+  let manager = try LicenseManager(
+    sessionFactory: {
+      let driver = NativeProviderSession(activation: activation) {
+        #expect(storage.saveCount == 1)
+        withUnsafeCurrentTask { $0?.cancel() }
+        clock.set(.nan)
+      }
+      initialDriver = driver
+      return driver
+    }, storage: storage, clock: clock.read)
+  let driver = try #require(initialDriver)
+  let attempt = Task { @MainActor in try await manager.activate(.licenseKey("TEST-KEY")) }
+  await #expect(throws: LicenseError(.invalidData)) { try await attempt.value }
+  #expect(driver.requests.count == 1 && driver.completions.isEmpty)
+
+  clock.set(2001)
+  try await manager.retryPersistence()
+  #expect(driver.completions == driver.requests && driver.completionWasCancelled)
+  #expect(manager.state.isLicensed && storage.saveCount == 2)
 }
 
 @Test(arguments: [Double.nan, .infinity, -.infinity, 253_402_300_800]) @MainActor

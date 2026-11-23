@@ -348,6 +348,13 @@ A separate provider package owns transport, scope validation, retry policy and i
 native binary. Provider adapters must retain an existing app's source strings and
 stored activation identity. No base native internals are exposed to provider modules.
 
+A Swift host that links its own Rust session and provider can use
+`LicenseManager(sessionFactory:storage:)`. The driver only exposes provider effect
+identifiers to Swift. `LicenseManager` stages saved bytes, acknowledges writes,
+and publishes snapshots as it does with a Swift `LicenseProvider`. The factory
+must create a fresh driver on each call so reload can validate a saved record
+before replacing the live session.
+
 ## Rust and C installation
 
 Add the core to an independent Cargo workspace using a published full Git revision:

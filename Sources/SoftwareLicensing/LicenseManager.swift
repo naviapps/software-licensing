@@ -5,8 +5,8 @@ import Foundation
 /// release outcomes still become durable when cancellation arrives during their provider call.
 @MainActor
 public final class LicenseManager {
-  private var session: LicenseSession
-  private let provider: any LicenseProvider
+  private var session: Session
+  private let makeSession: @MainActor () throws -> Session
   private let storage: any LicenseStorage
   private let clock: @Sendable () -> Date
   private let policy: LicenseRefreshPolicy
@@ -15,9 +15,33 @@ public final class LicenseManager {
   private let unavailableState: LicenseState
   private var observers: [UUID: AsyncStream<LicenseState>.Continuation] = [:]
   private var lastPublishedState: LicenseState?
-  private var deferredCompletion: [String: Any]?
+  private var deferredCompletion: Completion?
 
   public private(set) var initialRestoreError: LicenseError?
+
+  private enum Session {
+    case standard(LicenseSession, any LicenseProvider)
+    case nativeProvider(any LicenseSessionDriver)
+
+    @MainActor func dispatch(_ command: [String: Any]) throws -> Data {
+      switch self {
+      case .standard(let session, _): try session.dispatch(command)
+      case .nativeProvider(let driver): try driver.dispatch(LicensingNative.encode(command))
+      }
+    }
+
+    @MainActor func stageStoredRecord(_ record: Data) throws {
+      switch self {
+      case .standard(let session, _): try session.stageStoredRecord(record)
+      case .nativeProvider(let driver): try driver.stageStoredRecord(record)
+      }
+    }
+  }
+
+  private enum Completion {
+    case command([String: Any])
+    case nativeProvider(id: UInt64, cancelled: Bool)
+  }
 
   private struct Reply: Decodable {
     let state: LicenseState
@@ -38,29 +62,57 @@ public final class LicenseManager {
 
   /// Throws for an incompatible native ABI before reading storage.
   /// Persisted-record failures remain available through `initialRestoreError`.
-  public init(
+  public convenience init(
     provider: any LicenseProvider, storage: any LicenseStorage,
     refreshPolicy: LicenseRefreshPolicy? = nil,
     restorePersistedActivation: Bool = true,
     clock: @escaping @Sendable () -> Date = { Date() }
   ) throws {
+    try self.init(
+      makeSession: { .standard(LicenseSession(), provider) }, storage: storage,
+      refreshPolicy: refreshPolicy, restorePersistedActivation: restorePersistedActivation,
+      clock: clock)
+  }
+
+  /// Drive a host-owned native session, leaving storage and observation to this manager.
+  /// The factory must return a fresh session on each call. Reload replaces the
+  /// current session only after the stored record is readable and accepted.
+  public convenience init(
+    sessionFactory: @escaping @MainActor () throws -> any LicenseSessionDriver,
+    storage: any LicenseStorage, refreshPolicy: LicenseRefreshPolicy? = nil,
+    restorePersistedActivation: Bool = true,
+    clock: @escaping @Sendable () -> Date = { Date() }
+  ) throws {
+    try self.init(
+      makeSession: { .nativeProvider(try sessionFactory()) }, storage: storage,
+      refreshPolicy: refreshPolicy, restorePersistedActivation: restorePersistedActivation,
+      clock: clock)
+  }
+
+  private init(
+    makeSession: @escaping @MainActor () throws -> Session, storage: any LicenseStorage,
+    refreshPolicy: LicenseRefreshPolicy?, restorePersistedActivation: Bool,
+    clock: @escaping @Sendable () -> Date
+  ) throws {
     try LicensingNative.checkABI()
-    self.session = LicenseSession()
+    let firstSession = try makeSession()
+    self.session = firstSession
+    self.makeSession = makeSession
     self.unavailableState = LicenseManager.emptyState()
-    self.provider = provider
     self.storage = storage
     self.policy = refreshPolicy ?? .default
     self.clock = clock
     do {
-      try restore(readStorage: restorePersistedActivation)
+      try restore(readStorage: restorePersistedActivation, initialSession: firstSession)
     } catch {
       initialRestoreError = (error as? LicenseError) ?? LicenseError(.storageFailure)
       restorationBlocked = true
-      session = LicenseSession()
-      _ = try! session.dispatch([
-        "command": "restore", "policy": try! LicensingNative.object(LicenseRefreshPolicy.never),
-        "now": 0,
-      ])
+      session = try makeSession()
+      _ = try read(
+        session.dispatch([
+          "command": "restore", "policy": try LicensingNative.object(LicenseRefreshPolicy.never),
+          "now": 0,
+        ]))
     }
   }
 
@@ -200,7 +252,11 @@ public final class LicenseManager {
     }
     var command = command
     if command["now"] == nil { command["now"] = now }
-    let response = Response(try session.dispatch(command))
+    return observe(try session.dispatch(command))
+  }
+
+  private func observe(_ data: Data) -> Response {
+    let response = Response(data)
     if case .success(let reply) = response.decoded {
       publish(reply.state)
     }
@@ -233,7 +289,9 @@ public final class LicenseManager {
     (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["effect"] as? [String: Any]
   }
 
-  private func restore(readStorage: Bool, requireIdle: Bool = false) throws {
+  private func restore(
+    readStorage: Bool, requireIdle: Bool = false, initialSession: Session? = nil
+  ) throws {
     guard !restoring && (!requireIdle || deferredCompletion == nil) else {
       throw LicenseError(.operationInProgress)
     }
@@ -245,7 +303,7 @@ public final class LicenseManager {
       let current = try read(session.dispatch(["command": "checkReload", "now": now])).state
       publish(current)
     }
-    let candidate = LicenseSession()
+    let candidate = try initialSession ?? makeSession()
     if readStorage {
       let record: Data?
       do { record = try storage.load() } catch { throw LicenseError(.storageFailure) }
@@ -282,13 +340,13 @@ public final class LicenseManager {
         try storage.save(LicensingNative.encode(record))
         success = true
       } catch { success = false }
-      response = try complete(["command": "persisted", "id": id, "success": success])
+      response = try complete(.command(["command": "persisted", "id": id, "success": success]))
       if !success { throw LicenseError(.storageFailure) }
     }
     return response
   }
 
-  private func complete(_ completion: [String: Any]) throws -> Response {
+  private func complete(_ completion: Completion) throws -> Response {
     let instant = now
     do {
       // Rust validates the captured time without changing the outstanding effect.
@@ -299,22 +357,31 @@ public final class LicenseManager {
       throw error
     }
     deferredCompletion = nil
-    var command = completion
-    command["now"] = instant
-    do { return try send(command) } catch {
-      if completion["command"] as? String == "provider", let id = completion["id"] {
-        // Invalid custom-provider payloads must release their lease. Reuse the
-        // validated time rather than invoking the host clock again.
-        _ = try? send(["command": "cancel", "id": id, "now": instant])
+    switch completion {
+    case .command(var command):
+      command["now"] = instant
+      do { return try send(command) } catch {
+        if command["command"] as? String == "provider", let id = command["id"] {
+          // Invalid custom-provider payloads must release their lease using
+          // the validated timestamp.
+          _ = try? send(["command": "cancel", "id": id, "now": instant])
+        }
+        throw error
       }
-      throw error
+    case .nativeProvider(let id, let cancelled):
+      guard case .nativeProvider(let driver) = session else {
+        throw LicenseError(.unexpectedProviderResponse)
+      }
+      return observe(try driver.completeProviderEffect(id, now: instant, cancelled: cancelled))
     }
   }
 
   private func resumeCompletion() throws -> Response? {
     guard let completion = deferredCompletion else { return nil }
     let response = try complete(completion)
-    if completion["command"] as? String == "persisted", completion["success"] as? Bool == false {
+    if case .command(let command) = completion,
+      command["command"] as? String == "persisted", command["success"] as? Bool == false
+    {
       // Record the failed write first; this fresh recovery request may then retry it.
       let reply = try response.decoded.get()
       if reply.error?.code == .storageFailure {
@@ -331,50 +398,64 @@ public final class LicenseManager {
       response = try persist(response)
       let reply = try read(response)
       guard let effect = try effect(response.data) else { return reply }
-      guard let id = effect["id"], let operation = effect["operation"] as? String else {
+      guard effect["kind"] as? String == "provider", let id = effect["id"] as? UInt64 else {
         throw LicenseError(.unexpectedProviderResponse)
       }
-      let result: [String: Any]
-      var providerEntered = false
-      do {
-        try Task.checkCancellation()
-        switch operation {
-        case "activate":
-          let request: LicenseActivationRequest =
-            if let key = effect["licenseKey"] as? String { .licenseKey(key) } else { .automatic }
-          providerEntered = true
-          let activation = try await provider.activate(request)
-          // Once a provider creates an activation, persist its returned identity even
-          // if cancellation arrived meanwhile. Never create another seat to retry saving.
-          result = ["kind": "activated", "activation": try LicensingNative.object(activation)]
-        case "validate":
-          let activation = try decodeActivation(effect)
-          providerEntered = true
-          let validation = try await provider.validate(activation)
-          try Task.checkCancellation()
-          result = ["kind": "validated", "validation": try LicensingNative.object(validation)]
-        case "deactivate":
-          let activation = try decodeActivation(effect)
-          providerEntered = true
-          try await provider.deactivate(activation)
-          result = ["kind": "deactivated"]
-        default: throw LicenseError(.unexpectedProviderResponse)
+      switch session {
+      case .nativeProvider(let driver):
+        try await driver.executeProviderEffect(id)
+        response = try complete(.nativeProvider(id: id, cancelled: Task.isCancelled))
+      case .standard(_, let provider):
+        guard let operation = effect["operation"] as? String else {
+          throw LicenseError(.unexpectedProviderResponse)
         }
-      } catch let error
-        where error is CancellationError
-        || (operation == "validate" && Task.isCancelled)
-      {
-        result = [
-          "kind": "failed",
-          "failure": try LicensingNative.object(
-            LicenseError(
-              .cancelled, mutationOutcome: providerEntered ? nil : .notApplied)),
-        ]
-      } catch {
-        let failure = (error as? LicenseError) ?? LicenseError(.transportFailure)
-        result = ["kind": "failed", "failure": try LicensingNative.object(failure)]
+        let result = try await callProvider(provider, operation: operation, effect: effect)
+        response = try complete(.command(["command": "provider", "id": id, "result": result]))
       }
-      response = try complete(["command": "provider", "id": id, "result": result])
+    }
+  }
+
+  private func callProvider(
+    _ provider: any LicenseProvider, operation: String, effect: [String: Any]
+  ) async throws -> [String: Any] {
+    var providerEntered = false
+    do {
+      try Task.checkCancellation()
+      switch operation {
+      case "activate":
+        let request: LicenseActivationRequest =
+          if let key = effect["licenseKey"] as? String { .licenseKey(key) } else { .automatic }
+        providerEntered = true
+        let activation = try await provider.activate(request)
+        // Once a provider creates an activation, persist its returned identity even
+        // if cancellation arrived meanwhile. Never create another seat to retry saving.
+        return ["kind": "activated", "activation": try LicensingNative.object(activation)]
+      case "validate":
+        let activation = try decodeActivation(effect)
+        providerEntered = true
+        let validation = try await provider.validate(activation)
+        try Task.checkCancellation()
+        return ["kind": "validated", "validation": try LicensingNative.object(validation)]
+      case "deactivate":
+        let activation = try decodeActivation(effect)
+        providerEntered = true
+        try await provider.deactivate(activation)
+        return ["kind": "deactivated"]
+      default: throw LicenseError(.unexpectedProviderResponse)
+      }
+    } catch let error
+      where error is CancellationError
+      || (operation == "validate" && Task.isCancelled)
+    {
+      return [
+        "kind": "failed",
+        "failure": try LicensingNative.object(
+          LicenseError(
+            .cancelled, mutationOutcome: providerEntered ? nil : .notApplied)),
+      ]
+    } catch {
+      let failure = (error as? LicenseError) ?? LicenseError(.transportFailure)
+      return ["kind": "failed", "failure": try LicensingNative.object(failure)]
     }
   }
 
