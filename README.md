@@ -53,8 +53,8 @@ covers local installation of the verified `.nupkg` and native runtime requiremen
 
 ## SwiftPM installation
 
-Select a published full 40-character Git commit revision. Replace the placeholder
-below before resolving this consumer package:
+Create an empty `MyApp` directory and save the following as `Package.swift`.
+Replace the placeholder with a published full 40-character Git commit revision.
 
 ```swift
 // swift-tools-version: 6.3
@@ -372,6 +372,10 @@ software-licensing = { git = "https://github.com/naviapps/software-licensing.git
 Replace the placeholder with the commit you selected. Import `software_licensing`
 and keep your own `Cargo.lock`. A Windows Rust host can also select
 `software-licensing-windows` at the same URL and revision for DPAPI storage.
+For a first run, copy the [standalone Rust example](https://github.com/naviapps/software-licensing/blob/main/fixtures/consumers/rust/src/main.rs)
+from that revision into `src/main.rs` of a Cargo binary project and run `cargo run`.
+It exercises persistence acknowledgement and expiry with synthetic data.
+
 The core `Session` returns effects for the caller to execute. A Rust bridge can
 use `Reply::into_wire_parts()` to get session metadata and a separate persistence
 record. C callers read the `persist` receipt ID with `software_licensing_json_view`

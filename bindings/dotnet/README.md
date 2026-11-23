@@ -3,25 +3,24 @@
 ## Installation
 
 `NaviApps.SoftwareLicensing` targets .NET 10 and supplies a `win-x64` native
-asset. The maintainer distribution workflow checks the package on Windows x64. On Windows 11
-ARM64 (build 26100 or later), select x64 .NET to run consumers under emulation.
+asset. Use the x64 .NET SDK on Windows x64 or under emulation on Windows 11 ARM64
+(build 26100 or later). Check that `dotnet --info` reports x64 before continuing.
 
 Use the [Windows package acceptance command](#windows-package-acceptance) to
 produce a local package and `software-licensing-windows.json` receipt. Verify the
 package's SHA-256 against the receipt and use its directory as a local NuGet source.
 
-Set `DOTNET_BIN` to the absolute x64 .NET path. In a new consumer directory,
-use a fresh package cache and replace the example source with the directory
-containing the verified package:
+In an empty consumer directory, select the exact package version and replace
+`C:\owned\packages` with the directory containing the verified package.
 
 ```powershell
-$env:NUGET_PACKAGES = Join-Path (Get-Location) ".nuget-packages"
-& "$env:DOTNET_BIN" new console --framework net10.0
-& "$env:DOTNET_BIN" add package NaviApps.SoftwareLicensing --version 0.1.0 --source C:\owned\packages
+dotnet new console --framework net10.0 --no-restore
+dotnet package add NaviApps.SoftwareLicensing --version "[0.1.0]" --no-restore
+dotnet restore --source "C:\owned\packages" --packages .nuget-packages -p:UseAppHost=false
 ```
 
 Copy the [standalone .NET example](../../fixtures/consumers/dotnet/Program.cs) to
-`Program.cs`, then run `& "$env:DOTNET_BIN" run --runtime win-x64 -p:UseAppHost=false`.
+`Program.cs`, then run `dotnet run --no-restore -p:UseAppHost=false`.
 The same example runs against the isolated NuGet package in distribution checks.
 It uses synthetic access and in-memory storage to activate, reopen, refresh and deactivate.
 
