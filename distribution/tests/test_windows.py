@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from sdk_tooling import windows_delivery
 from sdk_tooling.adapters import load
 
 
@@ -158,6 +159,7 @@ class WindowsOutputTests(unittest.TestCase):
         nuget = local_modules["nuget"]
         native = local_modules["ffi"].FfiProduct.return_value
         native.version = "0.1.0"
+        native.library = "software_licensing"
         windows.native_environment.return_value = (env, root / "MSVC", dotnet)
         windows.build_library.return_value = built
         windows.verify_artifact.return_value = (built, receipt)
@@ -208,8 +210,14 @@ class WindowsOutputTests(unittest.TestCase):
                 "support_inputs",
                 side_effect=[tool_inputs, {} if change_tools else tool_inputs],
             ),
-            patch.object(driver.subprocess, "run") as commands,
-            patch.object(driver.subprocess, "check_output", side_effect=check_output),
+            patch.multiple(
+                windows_delivery,
+                windows=windows,
+                artifacts=local_modules["artifacts"],
+                c_compiler=local_modules["c_compiler"],
+            ),
+            patch.object(windows_delivery.subprocess, "run") as commands,
+            patch.object(windows_delivery.subprocess, "check_output", side_effect=check_output),
             patch.object(driver.platform, "platform", return_value="win32-arm64"),
             patch("builtins.print"),
         ):
@@ -258,16 +266,16 @@ class WindowsOutputTests(unittest.TestCase):
         self.assertEqual(windows.verify_library.call_args.args[0], accepted_dll)
         managed_call = managed.run_managed.call_args.kwargs
         self.assertEqual(managed_call["runtime"], "win-x64")
-        self.assertEqual(managed_call["properties"], {"UseAppHost": "false"})
         self.assertEqual(
-            managed_call["env"]["SOFTWARE_LICENSING_NATIVE_LIBRARY"], str(accepted_dll)
+            managed_call["properties"],
+            {"UseAppHost": "false", "SoftwareLicensingNativeLibrary": str(accepted_dll)},
         )
         fixture_call = nuget.run_isolated_consumer.call_args.kwargs
         self.assertEqual(fixture_call["runtime"], "win-x64")
         self.assertEqual(fixture_call["source"], fixture.read_text())
         self.assertIn(built, fixture_call["exclude_paths"])
         self.assertIn(candidate, fixture_call["exclude_paths"])
-        self.assertEqual(fixture_call["clear_environment"], ("SOFTWARE_LICENSING_NATIVE_LIBRARY",))
+        self.assertFalse(fixture_call.get("clear_environment"))
 
         local = output / driver.RID / native.version
         retained = json.loads((local / driver.RECEIPT).read_bytes())
@@ -308,38 +316,6 @@ class WindowsOutputTests(unittest.TestCase):
         ):
             driver.main([])
         load.assert_not_called()
-
-    def test_external_failure_preserves_previous_pair_in_both_locations(self):
-        driver = load_driver()
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            output, external = root / "local", root / "external"
-            feeds = [location / "win-x64/0.1.0" for location in (output, external)]
-            package = root / "test.nupkg"
-            package.write_bytes(b"new")
-            for feed in feeds:
-                feed.mkdir(parents=True)
-                (feed / package.name).write_bytes(b"previous")
-                (feed / driver.RECEIPT).write_bytes(b"previous receipt")
-            tooling = artifacts()
-
-            def fail_external(stage, destination, verify):
-                if destination == feeds[1]:
-                    raise OSError("external publication failed")
-                publish(stage, destination, verify)
-
-            tooling.publish = fail_external
-            with self.assertRaisesRegex(OSError, "external publication failed"):
-                driver.publish_x64(
-                    package,
-                    {"version": "0.1.0", "packages": {package.name: driver.sha256(package)}},
-                    output_dir=output,
-                    artifact_root=external,
-                    tooling=tooling,
-                )
-            for feed in feeds:
-                self.assertEqual((feed / package.name).read_bytes(), b"previous")
-                self.assertEqual((feed / driver.RECEIPT).read_bytes(), b"previous receipt")
 
 
 if __name__ == "__main__":

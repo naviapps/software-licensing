@@ -2,7 +2,6 @@ SDK_TOOLING ?= mise run sdk-tooling --
 SWIFT_FLAGS := -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 DOTNET_BIN ?= dotnet
 FRAMEWORK_DIR := $(CURDIR)/Artifacts/CSoftwareLicensing.xcframework/macos-arm64_x86_64
-NATIVE_LIBRARY := $(FRAMEWORK_DIR)/CSoftwareLicensing.framework/CSoftwareLicensing
 
 .DEFAULT_GOAL := check
 .PHONY: check check-source test-managed check-distribution native native-verify lint test test-rust test-distribution-tools test-dotnet test-c test-consumer test-installed-consumers format clean
@@ -42,7 +41,7 @@ test-rust:
 	cargo test --workspace --locked --offline
 
 test-dotnet: native-verify
-	SOFTWARE_LICENSING_NATIVE_LIBRARY="$(NATIVE_LIBRARY)" DOTNET_BIN="$(DOTNET_BIN)" $(SDK_TOOLING) python distribution/verify_dotnet.py
+	DOTNET_BIN="$(DOTNET_BIN)" $(SDK_TOOLING) python distribution/verify_dotnet.py
 
 test-c: native-verify
 	mkdir -p .native-build

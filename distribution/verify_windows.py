@@ -3,22 +3,18 @@
 
 import argparse
 import hashlib
-import os
 import platform
-import subprocess
 import sys
 import tempfile
-import tomllib
 from pathlib import Path
 
 from sdk_tooling.adapters import load, support_inputs
 from sdk_tooling.native_plan import ffi_product
+from sdk_tooling.windows_delivery import RID, TARGET, X64Acceptance
 
 from distribution.nuget import PACKAGE, check_package
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET = "x86_64-pc-windows-msvc"
-RID = "win-x64"
 RECEIPT = "software-licensing-windows.json"
 
 
@@ -53,85 +49,39 @@ def main(argv=None):
     windows = load("windows")
     managed = load("dotnet")
     artifacts = load("artifacts")
-    environment = {
-        key.upper(): value for key, value in os.environ.items() if key.upper() != "DOTNET_HOST_PATH"
-    }
-    host = windows.host_architecture()
-    env, tools, dotnet = windows.native_environment(host, environment, target_architecture="x64")
+    acceptance = X64Acceptance(ROOT)
+    env, dotnet = acceptance.env, acceptance.dotnet
     artifact_root = load("vm_environment").artifacts_dir(env)
-    env["RUSTUP_AUTO_INSTALL"] = "0"
-    sdk_version = subprocess.check_output(
-        [str(dotnet), "--version"], cwd=ROOT, env=env, text=True
-    ).strip()
-    if sdk_version != tomllib.loads((ROOT / "mise.toml").read_text())["tools"]["dotnet"]:
-        raise ValueError("Use the pinned x64 .NET SDK version from mise.toml")
     native = ffi_product(ROOT, factory=load("ffi").FfiProduct)
-
-    def run(*args):
-        subprocess.run([str(a) for a in args], cwd=ROOT, env=env, check=True)
-
-    run("cargo", "fetch", "--locked", "--target", TARGET)
-    run("cargo", "fmt", "--all", "--", "--check")
-    built = windows.build_library(native, env, tools, "x64", native_host=host)
-    run(
-        "cargo",
-        "clippy",
-        "--workspace",
-        "--all-targets",
-        "--target",
-        TARGET,
-        "--locked",
-        "--offline",
-        "--",
-        "-D",
-        "warnings",
-    )
-    run("cargo", "test", "--workspace", "--target", TARGET, "--locked", "--offline")
-
+    built = acceptance.build(native)
     output = ROOT / ".native-build"
     output.mkdir(exist_ok=True)
-    toolchain = {"backend": "msvc", "host": windows.MSVC_TARGETS[host], "target": TARGET}
     with tempfile.TemporaryDirectory(dir=output, prefix="win-x64-candidate-") as directory:
         candidate = Path(directory)
-        names = ("software_licensing.dll", "software_licensing.dll.lib")
         with artifacts.build_lock(output):
-            verified, native_receipt = windows.verify_artifact(native, "x64", environment=env)
-            if verified != built or native_receipt.get("toolchain") != toolchain:
-                raise ValueError("Windows x64 library differs from the selected host build")
+            dll, import_library, native_receipt = acceptance.stage(native, built, candidate)
             receipt_digest = sha256(built / "native-build.json")
-            dll, import_library = [
-                artifacts.stage_native(built / name, candidate / name) for name in names
-            ]
-            expected = {name: native_receipt["outputs"][name] for name in names}
+        expected = {
+            path.name: native_receipt["outputs"][path.name] for path in (dll, import_library)
+        }
 
         def verify_staged():
             if artifacts.hashes([dll, import_library], candidate) != expected:
                 raise ValueError("Staged DLL or import library differs from its verified receipt")
 
-        verify_staged()
         exports = windows.verify_library(
             dll,
             [ROOT / "crates/ffi/include/software_licensing.h"],
             "software_licensing_",
-            tools,
+            acceptance.tools,
             env,
             "x64",
         )
-        executable = candidate / "abi.exe"
-        # Windows prefers the executable directory for imported libraries.
-        load("c_compiler").compile_c(
+        acceptance.run_c(
             ROOT / "crates/ffi/tests/c/abi.c",
-            output=executable,
-            compiler=[tools / "cl.exe"],
-            include_dirs=[ROOT / "crates/ffi/include"],
-            libraries=[import_library],
-            style="msvc",
-            cwd=ROOT,
-            env=env,
+            include_directory=ROOT / "crates/ffi/include",
+            import_library=import_library,
         )
-        windows.require_pe_machine(executable, "x64")
-        run(executable)
-        env["SOFTWARE_LICENSING_NATIVE_LIBRARY"] = str(dll)
         config = ROOT / "bindings/dotnet/NuGet.Config"
         managed.run_managed(
             dotnet,
@@ -140,7 +90,7 @@ def main(argv=None):
             env=env,
             verify_style=True,
             runtime=RID,
-            properties={"UseAppHost": "false"},
+            properties={"UseAppHost": "false", "SoftwareLicensingNativeLibrary": str(dll)},
             nuget_config=config,
         )
 
@@ -184,11 +134,11 @@ def main(argv=None):
             "target": TARGET,
             "runtime": RID,
             "os": platform.platform(),
-            "execution": "x64-native" if host == "x64" else "x64-emulated-on-arm64",
+            "execution": "x64-native" if acceptance.host == "x64" else "x64-emulated-on-arm64",
             "version": native.version,
-            "toolchain": toolchain,
+            "toolchain": acceptance.toolchain,
             "toolInputs": tool_inputs,
-            "dotnetVersion": sdk_version,
+            "dotnetVersion": acceptance.dotnet_version,
             "run": env.get("GITHUB_RUN_ID"),
             "attempt": env.get("GITHUB_RUN_ATTEMPT"),
             "exports": sorted(exports),
@@ -206,7 +156,7 @@ def main(argv=None):
         publish_x64(
             package, receipt, output_dir=output, artifact_root=artifact_root, tooling=artifacts
         )
-    print(f"Windows x64 SoftwareLicensing acceptance passed on {host}.")
+    print(f"Windows x64 SoftwareLicensing acceptance passed on {acceptance.host}.")
 
 
 if __name__ == "__main__":

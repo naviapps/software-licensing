@@ -23,7 +23,6 @@ def check_package(
         source=(root / "fixtures/consumers/dotnet/Program.cs").read_text(encoding="utf-8"),
         work_parent=output,
         env=env,
-        clear_environment=("SOFTWARE_LICENSING_NATIVE_LIBRARY",),
         exclude_paths=exclude_paths,
         runtime=rid,
         properties={"Nullable": "enable", "TreatWarningsAsErrors": "true"},

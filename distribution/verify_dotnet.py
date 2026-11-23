@@ -26,18 +26,19 @@ def main():
     if not dotnet:
         raise SystemExit("Install .NET 10 or provide DOTNET_BIN")
     managed = load("dotnet")
+    native = xcframework(root)
+    framework = (
+        native.artifact / "macos-arm64_x86_64" / (native.module + ".framework") / native.module
+    )
     managed.run_managed(
         dotnet,
         root / "bindings/dotnet/tests/SoftwareLicensing.Tests/SoftwareLicensing.Tests.csproj",
         cwd=root,
         env=env,
+        properties={"SoftwareLicensingNativeLibrary": str(framework)},
         configuration="Debug",
         nuget_config=root / "bindings/dotnet/NuGet.Config",
         verify_style=True,
-    )
-    native = xcframework(root)
-    framework = (
-        native.artifact / "macos-arm64_x86_64" / (native.module + ".framework") / native.module
     )
     rid = "osx-arm64" if platform.machine() in {"arm64", "aarch64"} else "osx-x64"
     output = root / ".native-build"

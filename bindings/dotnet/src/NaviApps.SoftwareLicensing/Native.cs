@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -21,10 +20,6 @@ internal static class Native
     private const string Library = "software_licensing";
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     internal static readonly JsonSerializerOptions Json = Options();
-    static Native()
-    {
-        NativeLibrary.SetDllImportResolver(typeof(Native).Assembly, Resolve);
-    }
     internal static void RequireAbi(uint version)
     {
         if (version != 4) throw new LicenseException(LicenseErrorCode.IncompatibleAbiVersion);
@@ -37,11 +32,6 @@ internal static class Native
         { throw new LicenseException(LicenseErrorCode.IncompatibleAbiVersion); }
     }
     internal static IntPtr Create() { CheckAbi(); return SessionCreate(); }
-    private static IntPtr Resolve(string name, Assembly assembly, DllImportSearchPath? path)
-    {
-        var explicitPath = Environment.GetEnvironmentVariable("SOFTWARE_LICENSING_NATIVE_LIBRARY");
-        return name == Library && !string.IsNullOrEmpty(explicitPath) ? NativeLibrary.Load(explicitPath) : IntPtr.Zero;
-    }
     private static JsonSerializerOptions Options()
     {
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
