@@ -3,15 +3,12 @@
 ## Installation
 
 `NaviApps.SoftwareLicensing` targets .NET 10 and supplies a `win-x64` native
-asset. The SDK acceptance worker runs the x64 process under emulation on Windows
-11 ARM64 (build 26100 or later). On that host select x64 .NET to run consumers.
+asset. GitHub Actions checks the native package on Windows x64. On Windows 11
+ARM64 (build 26100 or later), select x64 .NET to run consumers under emulation.
 
-A successful Windows job retains the tested package and
-`software-licensing-windows.json`. Verify the package's SHA-256 against the
-receipt under `win-x64/<version>/` in the private CI controller archive. Extract the `.nupkg` file from
-that archive, leave the package itself intact, and use its directory as a local
-NuGet source. The job does not upload a GitHub Actions artifact or publish to a
-NuGet registry.
+Use the [Windows package acceptance command](#windows-package-acceptance) to
+produce a local package and `software-licensing-windows.json` receipt. Verify the
+package's SHA-256 against the receipt and use its directory as a local NuGet source.
 
 Set `DOTNET_BIN` to the absolute x64 .NET path. In a new consumer directory,
 use a fresh package cache and replace the example source with the directory

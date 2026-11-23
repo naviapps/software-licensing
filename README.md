@@ -348,8 +348,7 @@ stored activation identity. No base native internals are exposed to provider mod
 
 ## Rust and C installation
 
-Add the core to an independent Cargo workspace using the authenticated repository
-and a published full Git revision:
+Add the core to an independent Cargo workspace using a published full Git revision:
 
 ```toml
 [dependencies]
@@ -436,7 +435,7 @@ NuGet consumer on an owned Windows 11 ARM64 host. The .NET fixture checks DPAPI
 with synthetic records in a temporary directory. The receipt identifies the
 ARM64 host, x64 target, .NET SDK, emulated execution and verified package bytes.
 Local checks, macOS app integration and exact-source Windows executions provide
-separate evidence. The Windows job retains its package in the private archive.
+separate evidence.
 
 ## Development tooling
 
@@ -445,10 +444,10 @@ Developer commands use the immutable `sdk-tooling` revision in
 for verified caches, offline use and source overrides. Ordinary SwiftPM and NuGet
 consumers do not need that setup.
 
-GitHub Actions uses Xcode 27 for Rust and strict Swift tests and Windows x64
-for Rust and tooling tests. When the pinned tooling is publicly accessible,
-the full gates also cover C and .NET fixtures, native receipt verification and
-the installed Windows x64 package. These checks use synthetic fixture providers.
+GitHub Actions runs Rust, C and .NET fixtures on macOS and Windows x64. The
+macOS workflow also runs strict Swift tests and verifies the tracked framework
+receipt. The Windows workflow verifies the installed x64 NuGet package. These
+checks use synthetic fixture providers.
 
 ## Static checks
 
