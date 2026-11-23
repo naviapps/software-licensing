@@ -3,7 +3,7 @@
 ## Installation
 
 `NaviApps.SoftwareLicensing` targets .NET 10 and supplies a `win-x64` native
-asset. GitHub Actions checks the native package on Windows x64. On Windows 11
+asset. The maintainer distribution workflow checks the package on Windows x64. On Windows 11
 ARM64 (build 26100 or later), select x64 .NET to run consumers under emulation.
 
 Use the [Windows package acceptance command](#windows-package-acceptance) to
@@ -70,7 +70,7 @@ Rust or Python developer tooling.
 ### Windows package acceptance
 
 From the SDK root, follow the
-[maintainer setup](https://github.com/naviapps/software-licensing#build-and-acceptance)
+[distribution setup](../../README.md#distribution-checks)
 with a clean committed checkout on an owned Windows 11 ARM64 worker. Prepare
 native ARM64 Python and the pinned ARM64 Rust toolchain with the
 `x86_64-pc-windows-msvc` standard library. Select `HostARM64\x64` with
@@ -84,12 +84,13 @@ python -E -S -B tools/windows.py --architecture x64
 This verifies a single DLL across C, .NET recovery and DPAPI fixtures, and the
 isolated NuGet consumer. The package and receipt are retained together under
 `.native-build/win-x64/<version>/`. Point local package restore at that directory.
-The receipt records the build helper hashes from the SDK checkout. The
-GitHub-hosted job runs on x64. On Windows ARM64, run the local command to verify
-x64 emulation.
+The receipt records the SDK and shared build helper hashes. The GitHub-hosted
+distribution job runs on x64. On Windows ARM64, run the local command to verify x64
+emulation.
 
 ### macOS checks
 
-`mise exec -- make test-dotnet` on macOS verifies the tracked framework and
-runs managed lifecycle fixtures against it. It exercises fake providers and
-in-memory storage. The Windows x64 job exercises DPAPI.
+With the [pinned tooling checkout](../../README.md#distribution-checks)
+configured, `mise exec -- make test-dotnet` on macOS verifies the tracked
+framework and runs managed lifecycle fixtures against it. It exercises fake
+providers and in-memory storage. Windows x64 validation exercises DPAPI.

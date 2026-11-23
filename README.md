@@ -389,22 +389,6 @@ Keychain storage and never reads or writes a Keychain item. Rust implementation,
 build caches and developer tooling trees are unavailable to this external package. This local
 source/artifact gate does not prove remote Git installation or publication.
 
-The isolated .NET fixture uses the same lifecycle through an installed NuGet
-package. The macOS check packages the checked-in framework for the local test
-runtime. The Windows check packs the freshly built x64 DLL. Both fixtures load
-the packaged library through the runtime without an SDK source or library override.
-
-With mise-managed tools, run `mise exec -- make test-installed-consumers` from a
-clean, complete SDK checkout. This keeps the selected Cargo and Rust on `PATH`
-when the check moves into its external workspace. The Rust client uses a local
-mirror of the exact SDK commit and accepts Git packages only from that revision.
-The C client builds against only the copied framework, its public header and
-notices. Both exercises use synthetic entitlement and a fixed clock to verify
-that access waits for persistence, rejects a duplicate acknowledgement and
-expires without provider or storage calls. The macOS distribution job runs this
-gate alongside `make check-distribution`. This does not exercise Git authentication,
-production licensing or Windows DPAPI.
-
 From the SDK root, review `mise.toml` and select its pinned developer tools.
 Xcode must supply Swift 6.3 and the macOS 26 SDK or later:
 
@@ -415,19 +399,10 @@ mise exec -- cargo fetch --locked
 mise exec -- make check
 ```
 
-The checked-in framework is ready for validation after a fresh clone. Rebuild it
-with `mise exec -- make native` after changing native inputs, before running checks.
-
-`tools/native.py` builds and verifies the universal macOS 26 framework, locked
-dependencies, notices, exact C exports and deployment targets.
-Its receipt binds production inputs and build-tool bytes to the artifact hashes.
-`make check` verifies that existing framework, then runs Rust, Swift, C ownership,
-.NET fixtures and portable build-driver regressions without rebuilding the framework.
-`make test-tools` runs only the portable driver checks.
+The checked-in framework is ready for validation after a fresh clone. `make check`
+checks source lint, Rust Clippy and tests, strict Swift tests and the standalone
+SwiftPM consumer using this SDK checkout.
 Set `DEVELOPER_DIR` when Xcode is not the globally selected developer directory.
-The C ownership check uses AddressSanitizer. Rust tests cover the read-only access
-decision matrix and its mutation evidence. Swift and .NET tests exercise the same
-engine with synthetic callbacks, cancellation and storage recovery.
 
 Use the [Windows package acceptance](bindings/dotnet/README.md#windows-package-acceptance)
 procedure to build one x64 DLL and exercise it from Rust, C, .NET and an isolated
@@ -439,20 +414,40 @@ separate evidence.
 
 ## Development tooling
 
-Developer commands use the scripts included in this checkout. The
-[maintainer setup](#build-and-acceptance) installs the tools for these commands.
-
 GitHub Actions runs the same strict Swift tests and standalone Swift consumer
-on macOS 26 with Xcode 26.6 and macOS 27 with Xcode 27. A single macOS 27
-distribution job checks the tracked framework receipt and runs Rust, C and .NET
-fixtures. The Windows x64 workflow verifies the installed NuGet package. These
+on macOS 26 with Xcode 26.6 and macOS 27 with Xcode 27.2. Public Windows x64 CI
+runs Rust tests and exercises the .NET binding against a source-built DLL. These
 checks use synthetic fixture providers.
+
+### Distribution checks
+
+Set `NAVI_SDK_TOOLING_SOURCE` to the absolute path to a clean SDK Tooling
+checkout at the commit in `tools/tooling-sources.json`. With that checkout
+configured, run `mise exec -- make check-distribution` for native provenance,
+C ownership under AddressSanitizer, .NET and isolated NuGet consumers, and
+portable build-driver tests. The macOS check packages the checked-in framework
+and the Windows check packages a freshly built x64 DLL. Both fixtures load the
+packaged library through the runtime. Reuse the pinned tooling for `make native`
+after changing native inputs and for `make native-verify`.
+
+Use `mise exec -- make test-installed-consumers` from a clean, complete SDK
+checkout. The Rust fixture uses a local mirror of the exact SDK commit. The C
+fixture uses the copied framework, header and notices. Both exercise synthetic
+entitlement with a fixed clock.
+
+Maintainers can run the macOS and Windows x64 distribution gates in the private
+SDK Tooling repository. Substitute the full SDK commit SHA on `main`:
+
+```sh
+gh workflow run check-sdk-distribution.yml -R naviapps/sdk-tooling \
+  -f sdk=software-licensing -f revision=FULL_SDK_COMMIT_SHA
+```
 
 ## Static checks
 
 `mise install` prepares pinned developer tools. Run `mise run lint` before builds
-or `mise run format` to format owned source. Formatting excludes retained build
-helpers, native artifacts and original notices. The check targets run compiler
+or `mise run format` to format owned source. Formatting excludes native artifacts
+and original notices. The check targets run compiler
 and native acceptance separately.
 
 ## License

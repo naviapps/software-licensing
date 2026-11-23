@@ -4,9 +4,11 @@ FRAMEWORK_DIR := $(CURDIR)/Artifacts/CSoftwareLicensing.xcframework/macos-arm64_
 NATIVE_LIBRARY := $(FRAMEWORK_DIR)/CSoftwareLicensing.framework/CSoftwareLicensing
 
 .DEFAULT_GOAL := check
-.PHONY: check check-distribution native native-verify lint test test-rust test-tools test-dotnet test-c test-consumer test-installed-consumers format
+.PHONY: check check-source test-managed check-distribution native native-verify lint test test-rust test-tools test-dotnet test-c test-consumer test-installed-consumers format
 
-check: check-distribution test test-consumer
+check: check-source test test-consumer
+
+check-source: lint test-rust test-managed
 
 check-distribution: lint test-tools native-verify test-rust test-dotnet test-c
 
@@ -45,3 +47,6 @@ test-c: native-verify
 	mkdir -p .native-build
 	xcrun clang -std=c17 -Wall -Wextra -Werror -fsanitize=address -I crates/ffi/include crates/ffi/tests/c/abi.c -F "$(FRAMEWORK_DIR)" -framework CSoftwareLicensing -Wl,-rpath,"$(FRAMEWORK_DIR)" -o .native-build/abi-test
 	.native-build/abi-test
+
+test-managed:
+	dotnet run --configuration Release --project bindings/dotnet/tests/SoftwareLicensing.Tests/SoftwareLicensing.Tests.csproj -- --managed-only
