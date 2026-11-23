@@ -86,17 +86,18 @@ class WindowsOutputTests(unittest.TestCase):
 
     def test_rejects_captured_source_for_a_different_actions_revision(self):
         driver = load_driver()
-        with patch.dict(
-            os.environ,
-            {
-                "NAVI_CI_SOURCE_COMMIT": "a" * 40,
-                "NAVI_CI_SOURCE_FINGERPRINT": "b" * 64,
-                "GITHUB_SHA": "c" * 40,
-            },
-            clear=True,
-        ):
-            with self.assertRaisesRegex(ValueError, "differs from the Actions revision"):
-                driver.acceptance_source()
+        with patch.object(driver, "load", return_value=load("windows_delivery")):
+            with patch.dict(
+                os.environ,
+                {
+                    "NAVI_CI_SOURCE_COMMIT": "a" * 40,
+                    "NAVI_CI_SOURCE_FINGERPRINT": "b" * 64,
+                    "GITHUB_SHA": "c" * 40,
+                },
+                clear=True,
+            ):
+                with self.assertRaisesRegex(ValueError, "differs from the Actions revision"):
+                    driver.acceptance_source()
 
     def exercise_driver(
         self, root, *, host="arm64", stale=False, retain=False, mutate=False, change_tools=False
