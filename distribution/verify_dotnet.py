@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 from sdk_tooling.adapters import load
-from sdk_tooling.native_plan import builder
+from sdk_tooling.xcframework import xcframework
 
 from distribution.nuget import PACKAGE, check_package
 
@@ -35,7 +35,7 @@ def main():
         nuget_config=root / "bindings/dotnet/NuGet.Config",
         verify_style=True,
     )
-    native = builder(root)
+    native = xcframework(root)
     framework = (
         native.artifact / "macos-arm64_x86_64" / (native.module + ".framework") / native.module
     )

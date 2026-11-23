@@ -2,7 +2,7 @@
 commands = [
   ["cargo", "fetch", "--locked"],
   ["make", "check-distribution"],
-  ["sdk-tooling", "installed-consumers"],
+  ["sdk-tooling", "rust-c-consumers"],
   ["sdk-tooling", "swift-consumer", "--distribution"],
 ]
 

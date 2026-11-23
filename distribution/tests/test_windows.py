@@ -148,7 +148,7 @@ class WindowsOutputTests(unittest.TestCase):
             "c_compiler": Mock(),
             "dotnet": Mock(),
             "nuget": Mock(),
-            "native": Mock(),
+            "ffi": Mock(),
             "artifacts": artifacts(),
         }
         windows = local_modules["windows"]
@@ -156,7 +156,7 @@ class WindowsOutputTests(unittest.TestCase):
         windows.MSVC_TARGETS = msvc_targets
         managed = local_modules["dotnet"]
         nuget = local_modules["nuget"]
-        native = local_modules["native"].NativeBuilder.return_value
+        native = local_modules["ffi"].FfiProduct.return_value
         native.version = "0.1.0"
         windows.native_environment.return_value = (env, root / "MSVC", dotnet)
         windows.build_library.return_value = built
@@ -234,10 +234,9 @@ class WindowsOutputTests(unittest.TestCase):
             native, env, root / "MSVC", "x64", native_host=host
         )
         windows.verify_artifact.assert_called_once_with(native, "x64", environment=env)
-        local_modules["native"].NativeBuilder.assert_called_once_with(
+        local_modules["ffi"].FfiProduct.assert_called_once_with(
             root.resolve(),
             symbol_prefix="software_licensing_",
-            minimum_macos="26.0",
             specification="native.toml",
         )
         self.assertTrue(

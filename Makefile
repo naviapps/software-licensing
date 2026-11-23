@@ -14,10 +14,10 @@ check-source: lint test-rust test-managed
 check-distribution: test-distribution-tools native-verify test-dotnet test-c
 
 native:
-	$(SDK_TOOLING) native
+	$(SDK_TOOLING) xcframework
 
 native-verify:
-	$(SDK_TOOLING) native --verify
+	$(SDK_TOOLING) xcframework --verify
 
 lint:
 	$(SDK_TOOLING) quality check --dotnet
@@ -33,7 +33,7 @@ test-consumer:
 	$(SDK_TOOLING) swift-consumer
 
 test-installed-consumers:
-	$(SDK_TOOLING) installed-consumers
+	$(SDK_TOOLING) rust-c-consumers
 
 test-distribution-tools:
 	$(SDK_TOOLING) python -m unittest discover -s distribution/tests -v
