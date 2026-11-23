@@ -5,7 +5,7 @@ FRAMEWORK_DIR := $(CURDIR)/Artifacts/CSoftwareLicensing.xcframework/macos-arm64_
 NATIVE_LIBRARY := $(FRAMEWORK_DIR)/CSoftwareLicensing.framework/CSoftwareLicensing
 
 .DEFAULT_GOAL := check
-.PHONY: check check-source test-managed check-distribution native native-verify lint test test-rust test-distribution-tools test-dotnet test-c test-consumer test-installed-consumers format
+.PHONY: check check-source test-managed check-distribution native native-verify lint test test-rust test-distribution-tools test-dotnet test-c test-consumer test-installed-consumers format clean
 
 check: check-source test test-consumer
 
@@ -51,3 +51,10 @@ test-c: native-verify
 
 test-managed:
 	dotnet run --configuration Release --project bindings/dotnet/tests/SoftwareLicensing.Tests/SoftwareLicensing.Tests.csproj -- --managed-only
+
+clean:
+	$(SDK_TOOLING) clean target .build .native-build \
+		bindings/dotnet/src/NaviApps.SoftwareLicensing/bin \
+		bindings/dotnet/src/NaviApps.SoftwareLicensing/obj \
+		bindings/dotnet/tests/SoftwareLicensing.Tests/bin \
+		bindings/dotnet/tests/SoftwareLicensing.Tests/obj
