@@ -53,7 +53,8 @@ def main(argv=None):
     env, dotnet = acceptance.env, acceptance.dotnet
     artifact_root = load("vm_environment").artifacts_dir(env)
     native = ffi_product(ROOT, factory=load("ffi").FfiProduct)
-    built = acceptance.build(native)
+    # Retained notices include dependencies from the macOS builds.
+    built = acceptance.build(native, fetch_all=True)
     output = ROOT / ".native-build"
     output.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=output, prefix="win-x64-candidate-") as directory:
