@@ -380,7 +380,7 @@ binary. The C client needs no Cargo workspace or SDK development tooling.
 
 ## Build and acceptance
 
-`make check` includes `python3 -B tools/consumer.py`. This stages only installable
+`make check` includes the shared Swift consumer command. It stages only installable
 SDK inputs and builds and runs the independent `fixtures/swift-consumer` package
 with strict concurrency and warnings as errors. The fixture uses the public core
 and Keychain products, an injected fixed clock, callbacks and in-memory storage to
@@ -400,8 +400,9 @@ mise exec -- make check
 ```
 
 The checked-in framework is ready for validation after a fresh clone. `make check`
-checks source lint, Rust Clippy and tests, strict Swift tests and the standalone
-SwiftPM consumer using this SDK checkout.
+checks source lint, Rust Clippy and tests, strict Swift tests, the managed lifecycle
+fixture and the standalone SwiftPM consumer. The `sdk-tooling` task in
+[`mise.toml`](mise.toml) pins the shared development tools to a public Git revision.
 Set `DEVELOPER_DIR` when Xcode is not the globally selected developer directory.
 
 Use the [Windows package acceptance](bindings/dotnet/README.md#windows-package-acceptance)
@@ -422,7 +423,8 @@ checks use synthetic fixture providers.
 ### Distribution checks
 
 Set `NAVI_SDK_TOOLING_SOURCE` to the absolute path to a clean SDK Tooling
-checkout at the commit in `tools/tooling-sources.json`. With that checkout
+checkout at the revision pinned by the `sdk-tooling` task in [`mise.toml`](mise.toml).
+With that checkout
 configured, run `mise exec -- make check-distribution` for native provenance,
 C ownership under AddressSanitizer, .NET and isolated NuGet consumers, and
 portable build-driver tests. The macOS check packages the checked-in framework
@@ -435,7 +437,7 @@ checkout. The Rust fixture uses a local mirror of the exact SDK commit. The C
 fixture uses the copied framework, header and notices. Both exercise synthetic
 entitlement with a fixed clock.
 
-Maintainers can run the macOS and Windows x64 distribution gates in the private
+Maintainers can run the macOS and Windows x64 distribution gates in the
 SDK Tooling repository. Substitute the full SDK commit SHA on `main`:
 
 ```sh

@@ -1,0 +1,11 @@
+[swift]
+executable = "CoreLifecycleConsumer"
+inputs = ["Package.swift", "Sources", "Tests", "Artifacts", "ThirdParty", "LICENSE"]
+
+[installed]
+git_url = "https://github.com/naviapps/software-licensing.git"
+rust_packages = ["software-licensing"]
+
+[installed.c]
+framework = "Artifacts/CSoftwareLicensing.xcframework/macos-arm64_x86_64/CSoftwareLicensing.framework"
+header = "software_licensing.h"

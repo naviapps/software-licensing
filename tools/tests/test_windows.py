@@ -13,6 +13,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from tools._tooling import load
+
 
 def load_driver():
     tools = Path(__file__).resolve().parents[1]
@@ -22,7 +24,7 @@ def load_driver():
     driver = importlib.util.module_from_spec(spec)
     with (
         patch.object(sys, "path", [str(tools), *sys.path]),
-        patch.dict(sys.modules, {"_tooling": SimpleNamespace(load=Mock(), support_inputs=Mock())}),
+        patch.dict(sys.modules, {"_tooling": SimpleNamespace(load=load, support_inputs=Mock())}),
     ):
         spec.loader.exec_module(driver)
     return driver
@@ -141,6 +143,7 @@ class WindowsOutputTests(unittest.TestCase):
             environment["NAVI_CI_ARTIFACTS"] = str(ci)
         env = dict(environment, PATH="owned-toolchain", CARGO_TARGET_DIR=str(root / "redirected"))
         local_modules = {
+            "windows_delivery": load("windows_delivery"),
             "windows": Mock(),
             "bindings": Mock(),
             "native": Mock(),

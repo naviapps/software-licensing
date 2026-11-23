@@ -10,7 +10,7 @@ check: check-source test test-consumer
 
 check-source: lint test-rust test-managed
 
-check-distribution: lint test-tools native-verify test-rust test-dotnet test-c
+check-distribution: test-tools native-verify test-dotnet test-c
 
 native:
 	python3 tools/native.py
@@ -19,20 +19,20 @@ native-verify:
 	python3 tools/native.py --verify
 
 lint:
-	mise exec -- python3 -B tools/quality.py check --dotnet
+	mise run sdk-tooling -- quality check --dotnet
 	cargo clippy --workspace --all-targets --locked --offline -- -D warnings
 
 format:
-	mise exec -- python3 -B tools/quality.py format --dotnet
+	mise run sdk-tooling -- quality format --dotnet
 
 test:
 	swift test $(SWIFT_FLAGS)
 
 test-consumer:
-	python3 -B tools/consumer.py
+	mise run sdk-tooling -- swift-consumer
 
 test-installed-consumers:
-	python3 -B tools/install-consumers.py
+	mise run sdk-tooling -- installed-consumers
 
 test-tools:
 	python3 -B -m unittest discover -s tools/tests -v

@@ -3,16 +3,12 @@
 
 import argparse
 import hashlib
-import json
 import os
 import platform
-import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import tomllib
-from contextlib import ExitStack
 from pathlib import Path
 
 from _tooling import load, support_inputs
@@ -25,22 +21,7 @@ RECEIPT = "software-licensing-windows.json"
 
 
 def acceptance_source():
-    commit = os.environ.get("NAVI_CI_SOURCE_COMMIT")
-    fingerprint = os.environ.get("NAVI_CI_SOURCE_FINGERPRINT")
-    if commit is not None or fingerprint is not None:
-        if not re.fullmatch(r"[a-f0-9]{64}", fingerprint or ""):
-            raise ValueError("Captured Windows x64 acceptance requires the workspace SHA-256")
-    else:
-        if subprocess.check_output(
-            ["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=ROOT, text=True
-        ).strip():
-            raise ValueError("Windows x64 acceptance requires a clean committed checkout")
-        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    if not re.fullmatch(r"[a-f0-9]{40}(?:[a-f0-9]{24})?", commit or ""):
-        raise ValueError("Windows x64 acceptance requires the full source commit SHA")
-    if os.environ.get("GITHUB_SHA", commit) != commit:
-        raise ValueError("Windows x64 acceptance source differs from the Actions revision")
-    return commit, fingerprint
+    return load("windows_delivery").acceptance_source(ROOT, match_actions=True)
 
 
 def sha256(path):
@@ -49,88 +30,14 @@ def sha256(path):
 
 
 def publish_x64(package, receipt, *, output_dir, artifact_root, tooling):
-    relative = Path(RID) / receipt["version"]
-    local = output_dir / relative
-    external = artifact_root / relative if artifact_root else local
-    local_path, external_path = local.resolve(), external.resolve()
-    destinations = [local]
-    if external_path != local_path:
-        if external_path.is_relative_to(local_path) or local_path.is_relative_to(external_path):
-            raise ValueError("Local and CI x64 evidence directories must be disjoint")
-        destinations.append(external)
-
-    names = {package.name, RECEIPT}
-
-    def check_destination(path):
-        if (
-            path.parent.is_symlink()
-            or path.parent.is_junction()
-            or path.is_symlink()
-            or path.is_junction()
-            or (
-                path.exists()
-                and (
-                    not path.is_dir()
-                    or any(
-                        name.name not in names or name.is_symlink() or not name.is_file()
-                        for name in path.iterdir()
-                    )
-                )
-            )
-        ):
-            raise ValueError("Windows x64 evidence directory contains unrelated files")
-
-    def verify_pair(path):
-        if (
-            {entry.name for entry in path.iterdir()} != names
-            or json.loads((path / RECEIPT).read_bytes()) != receipt
-            or sha256(path / package.name) != receipt["packages"][package.name]
-        ):
-            raise ValueError("Windows x64 evidence differs from the verified package and receipt")
-
-    with tooling.build_lock(output_dir), ExitStack() as staging:
-        stages = []
-        for destination in destinations:
-            check_destination(destination)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            directory = staging.enter_context(
-                tempfile.TemporaryDirectory(dir=destination.parent, prefix="evidence-")
-            )
-            stage = Path(directory) / destination.name
-            stage.mkdir()
-            shutil.copyfile(package, stage / package.name)
-            tooling.write_json(stage / RECEIPT, receipt)
-            verify_pair(stage)
-            stages.append(stage)
-
-        cleanup_error = None
-
-        def verify_local():
-            nonlocal cleanup_error
-            verify_pair(local)
-            if len(stages) == 1:
-                return
-            check_destination(external)
-            external_verified = False
-
-            def verify_external():
-                nonlocal external_verified
-                verify_pair(external)
-                external_verified = True
-
-            # Keep local rollback available until the CI pair is verified.
-            try:
-                tooling.publish(stages[1], external, verify_external)
-            except BaseException as error:
-                if not external_verified:
-                    raise
-                verify_pair(external)
-                cleanup_error = error
-
-        check_destination(local)
-        tooling.publish(stages[0], local, verify_local)
-        if cleanup_error is not None:
-            raise cleanup_error
+    load("windows_delivery").publish_x64(
+        package,
+        receipt,
+        receipt_name=RECEIPT,
+        output_dir=output_dir,
+        artifact_root=artifact_root,
+        tooling=tooling,
+    )
 
 
 def main(argv=None):
