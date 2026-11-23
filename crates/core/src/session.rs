@@ -118,6 +118,13 @@ pub enum ProviderReply {
     Deactivated,
     Failed { failure: Failure },
 }
+
+/// An outcome from a host effect that has already run.
+pub enum EffectCompletion {
+    /// An invalid provider payload has no decoded reply.
+    Provider(Option<ProviderReply>),
+    Persisted(bool),
+}
 /// Final refresh decision. Validation outcomes describe access after persistence,
 /// evaluated at completion time. Failures without a completed decision return an error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +176,7 @@ pub struct Session {
     sequence: u64,
     active: Option<Active>,
     pending: Option<Pending>,
+    deferred_completion: Option<(u64, EffectCompletion)>,
     observed_at: Cell<Option<f64>>,
 }
 impl Session {
@@ -180,6 +188,93 @@ impl Session {
         }
         self.staged_record = Some(decode_stored_record(bytes)?);
         Ok(())
+    }
+
+    /// Check whether a completed effect is waiting for a valid host timestamp.
+    pub fn has_deferred_completion(&self) -> bool {
+        self.deferred_completion.is_some()
+    }
+
+    /// Acknowledge a finished effect. A missing or invalid timestamp keeps its
+    /// outcome pending so the host never has to run the effect again.
+    pub fn complete_effect(
+        &mut self,
+        id: u64,
+        completion: EffectCompletion,
+        now: Option<f64>,
+    ) -> Result<Reply, Failure> {
+        let current = match &completion {
+            EffectCompletion::Provider(_) => {
+                self.pending.is_none() && self.active.as_ref().is_some_and(|a| a.id == id)
+            }
+            EffectCompletion::Persisted(_) => self
+                .pending
+                .as_ref()
+                .is_some_and(|p| p.id == id && p.awaiting_completion),
+        };
+        if !current || self.has_deferred_completion() {
+            return Err(Failure::new(ErrorCode::OperationInProgress));
+        }
+        match now.filter(|time| valid_time(*time).is_ok()) {
+            Some(now) => self.apply_completion(id, completion, now),
+            None => {
+                self.deferred_completion = Some((id, completion));
+                Err(Failure::new(ErrorCode::InvalidData))
+            }
+        }
+    }
+
+    /// Apply the retained outcome. Acknowledging a failed save leaves it
+    /// retryable when cancellation prevents issuing another save.
+    pub fn resume_completion(
+        &mut self,
+        now: Option<f64>,
+        cancelled: bool,
+    ) -> Result<Reply, Failure> {
+        let now = now
+            .filter(|time| valid_time(*time).is_ok())
+            .ok_or_else(|| Failure::new(ErrorCode::InvalidData))?;
+        let (id, completion) = self
+            .deferred_completion
+            .take()
+            .ok_or_else(|| Failure::new(ErrorCode::OperationInProgress))?;
+        let failed_save = matches!(completion, EffectCompletion::Persisted(false));
+        let mut reply = self.apply_completion(id, completion, now)?;
+        if failed_save {
+            if !cancelled {
+                return self.dispatch(Command::RetryPersistence { now });
+            }
+            reply.error = Some(Failure::new(ErrorCode::Cancelled));
+        }
+        Ok(reply)
+    }
+
+    fn apply_completion(
+        &mut self,
+        id: u64,
+        completion: EffectCompletion,
+        now: f64,
+    ) -> Result<Reply, Failure> {
+        match completion {
+            EffectCompletion::Persisted(success) => {
+                self.dispatch(Command::Persisted { id, success, now })
+            }
+            EffectCompletion::Provider(result) => {
+                let reply = result
+                    .ok_or_else(|| Failure::new(ErrorCode::InvalidData))
+                    .and_then(|result| self.dispatch(Command::Provider { id, result, now }));
+                match reply {
+                    Ok(reply) => Ok(reply),
+                    Err(failure) => {
+                        // Release the lease without dropping the mutation journal.
+                        // Publish the resulting idle state with the original failure.
+                        let mut reply = self.dispatch(Command::Cancel { id, now })?;
+                        reply.error = Some(failure);
+                        Ok(reply)
+                    }
+                }
+            }
+        }
     }
 
     pub fn dispatch(&mut self, command: Command) -> Result<Reply, Failure> {
@@ -203,6 +298,14 @@ impl Session {
         self.observe(now);
         if !self.initialized && !matches!(command, Command::Restore { .. }) {
             return Err(Failure::new(ErrorCode::InvalidData));
+        }
+        if self.has_deferred_completion()
+            && matches!(
+                command,
+                Command::Provider { .. } | Command::Persisted { .. } | Command::Cancel { .. }
+            )
+        {
+            return Err(Failure::new(ErrorCode::OperationInProgress));
         }
         let mut effect = None;
         let mut outcome = None;

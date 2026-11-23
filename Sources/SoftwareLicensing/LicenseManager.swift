@@ -15,7 +15,7 @@ public final class LicenseManager {
   private let unavailableState: LicenseState
   private var observers: [UUID: AsyncStream<LicenseState>.Continuation] = [:]
   private var lastPublishedState: LicenseState?
-  private var deferredCompletion: Completion?
+  private var hostCompletion: HostCompletion?
 
   public private(set) var initialRestoreError: LicenseError?
 
@@ -38,9 +38,17 @@ public final class LicenseManager {
     }
   }
 
-  private enum Completion {
-    case command([String: Any])
-    case nativeProvider(id: UInt64, cancelled: Bool)
+  // Host-supplied drivers can implement the original session wire protocol.
+  private enum HostCompletion {
+    case persisted(id: UInt64, success: Bool)
+    case provider(id: UInt64, cancelled: Bool)
+  }
+
+  private var hasCompletion: Bool {
+    switch session {
+    case .standard(let session, _): session.hasCompletion
+    case .nativeProvider: hostCompletion != nil
+    }
   }
 
   private struct Reply: Decodable {
@@ -292,7 +300,7 @@ public final class LicenseManager {
   private func restore(
     readStorage: Bool, requireIdle: Bool = false, initialSession: Session? = nil
   ) throws {
-    guard !restoring && (!requireIdle || deferredCompletion == nil) else {
+    guard !restoring && (!requireIdle || !hasCompletion) else {
       throw LicenseError(.operationInProgress)
     }
     // Own the entire replacement, including reentrant clock and storage callbacks.
@@ -324,7 +332,7 @@ public final class LicenseManager {
 
   private func recoverPersistence() async throws {
     try Task.checkCancellation()
-    if deferredCompletion != nil || state.hasPendingPersistence { try await retryPersistence() }
+    if hasCompletion || state.hasPendingPersistence { try await retryPersistence() }
     if restorationBlocked { try reload() }
     try Task.checkCancellation()
   }
@@ -332,7 +340,7 @@ public final class LicenseManager {
   private func persist(_ original: Response) throws -> Response {
     var response = original
     while let effect = try effect(response.data), effect["kind"] as? String == "persist" {
-      guard let id = effect["id"], let record = effect["record"] else {
+      guard let id = effect["id"] as? UInt64, let record = effect["record"] else {
         throw LicenseError(.unexpectedProviderResponse)
       }
       let success: Bool
@@ -340,56 +348,53 @@ public final class LicenseManager {
         try storage.save(LicensingNative.encode(record))
         success = true
       } catch { success = false }
-      response = try complete(.command(["command": "persisted", "id": id, "success": success]))
+      switch session {
+      case .standard(let session, _):
+        response = observe(try session.completePersistence(id, success: success, now: now))
+      case .nativeProvider(let driver):
+        response = try completeHostEffect(driver, .persisted(id: id, success: success))
+      }
       if !success { throw LicenseError(.storageFailure) }
     }
     return response
   }
 
-  private func complete(_ completion: Completion) throws -> Response {
+  private func completeHostEffect(
+    _ driver: any LicenseSessionDriver, _ completion: HostCompletion
+  ) throws -> Response {
     let instant = now
     do {
-      // Rust validates the captured time without changing the outstanding effect.
-      _ = try session.dispatch(["command": "snapshot", "now": instant])
+      _ = try driver.dispatch(LicensingNative.encode(["command": "snapshot", "now": instant]))
     } catch {
-      // The effect already ran. Retain its result, not another request to run it.
-      deferredCompletion = completion
+      hostCompletion = completion
       throw error
     }
-    deferredCompletion = nil
+    hostCompletion = nil
     switch completion {
-    case .command(var command):
-      command["now"] = instant
-      do { return try send(command) } catch {
-        if command["command"] as? String == "provider", let id = command["id"] {
-          // Invalid custom-provider payloads must release their lease using
-          // the validated timestamp.
-          _ = try? send(["command": "cancel", "id": id, "now": instant])
-        }
-        throw error
-      }
-    case .nativeProvider(let id, let cancelled):
-      guard case .nativeProvider(let driver) = session else {
-        throw LicenseError(.unexpectedProviderResponse)
-      }
+    case .persisted(let id, let success):
+      return try send(["command": "persisted", "id": id, "success": success, "now": instant])
+    case .provider(let id, let cancelled):
       return observe(try driver.completeProviderEffect(id, now: instant, cancelled: cancelled))
     }
   }
 
   private func resumeCompletion() throws -> Response? {
-    guard let completion = deferredCompletion else { return nil }
-    let response = try complete(completion)
-    if case .command(let command) = completion,
-      command["command"] as? String == "persisted", command["success"] as? Bool == false
-    {
-      // Record the failed write first; this fresh recovery request may then retry it.
-      let reply = try response.decoded.get()
-      if reply.error?.code == .storageFailure {
+    switch session {
+    case .standard(let session, _):
+      guard session.hasCompletion else { return nil }
+      let instant = now
+      return observe(try session.resumeCompletion(now: instant, cancelled: Task.isCancelled))
+    case .nativeProvider(let driver):
+      guard let completion = hostCompletion else { return nil }
+      let response = try completeHostEffect(driver, completion)
+      if case .persisted(_, false) = completion,
+        try response.decoded.get().error?.code == .storageFailure
+      {
         try Task.checkCancellation()
         return try send(["command": "retryPersistence"])
       }
+      return response
     }
-    return response
   }
 
   private func drive(_ original: Response) async throws -> Reply {
@@ -404,13 +409,13 @@ public final class LicenseManager {
       switch session {
       case .nativeProvider(let driver):
         try await driver.executeProviderEffect(id)
-        response = try complete(.nativeProvider(id: id, cancelled: Task.isCancelled))
-      case .standard(_, let provider):
+        response = try completeHostEffect(driver, .provider(id: id, cancelled: Task.isCancelled))
+      case .standard(let session, let provider):
         guard let operation = effect["operation"] as? String else {
           throw LicenseError(.unexpectedProviderResponse)
         }
         let result = try await callProvider(provider, operation: operation, effect: effect)
-        response = try complete(.command(["command": "provider", "id": id, "result": result]))
+        response = observe(try session.completeProvider(id, result: result, now: now))
       }
     }
   }

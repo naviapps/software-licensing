@@ -23,7 +23,7 @@ static void dispatch(SoftwareLicensingSession *session, const char *command, uin
 }
 
 int main(void) {
-    assert(software_licensing_abi_version() == 4);
+    assert(software_licensing_abi_version() == SOFTWARE_LICENSING_ABI_VERSION);
     SoftwareLicensingSession *session = software_licensing_session_create();
     assert(session != NULL);
     char reply[4096];

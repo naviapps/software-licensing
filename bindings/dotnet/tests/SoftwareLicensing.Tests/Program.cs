@@ -83,8 +83,8 @@ foreach (var invalid in new[] { "\"futureOutcome\"", "\"refreshed\"", "0", "\"0\
     try { JsonSerializer.Deserialize<LicenseRefreshOutcome>(invalid, Native.Json); throw new System.Diagnostics.UnreachableException("Unknown outcome accepted."); }
     catch (JsonException) { }
 }
-Native.RequireAbi(4);
-foreach (var oldAbi in new uint[] { 1, 2, 3 })
+Native.RequireAbi(5);
+foreach (var oldAbi in new uint[] { 1, 2, 3, 4 })
 {
     try { Native.RequireAbi(oldAbi); throw new System.Diagnostics.UnreachableException("Old ABI accepted."); }
     catch (LicenseException error) { Check(error.Failure.Code == LicenseErrorCode.IncompatibleAbiVersion); }
@@ -981,6 +981,35 @@ foreach (var fault in new[] { "throw", "range" })
         Check(manager.State.Plan.IsLicensed && !manager.State.HasPendingPersistence);
     }
 
+// A reload acquiring time must not discard a provider completion it overlaps.
+{
+    var completionClock = new CompletionClock();
+    var completionStorage = new MemoryStorage();
+    var completionProvider = new ReleaseProvider
+    {
+        PendingActivation = new(TaskCreationOptions.RunContinuationsAsynchronously),
+    };
+    using var manager = new LicenseManager(completionProvider, completionStorage, clock: completionClock.Read);
+    var activation = manager.ActivateAsync(new("TEST-KEY"));
+    using var entered = new ManualResetEventSlim();
+    using var proceed = new ManualResetEventSlim();
+    completionClock.BeforeRead = () =>
+    {
+        entered.Set();
+        Check(proceed.Wait(TimeSpan.FromSeconds(5)));
+    };
+    var reload = Task.Run(manager.Reload);
+    try
+    {
+        Check(entered.Wait(TimeSpan.FromSeconds(5)));
+        completionProvider.PendingActivation.SetResult(await new Provider(false).ActivateAsync(new("TEST-KEY")));
+        Check((await activation.WaitAsync(TimeSpan.FromSeconds(5))).Plan.IsLicensed);
+    }
+    finally { proceed.Set(); }
+    await reload.WaitAsync(TimeSpan.FromSeconds(5));
+    Check(manager.State.Plan.IsLicensed && completionStorage.SaveCount == 2 && completionProvider.ActivationCount == 1);
+}
+
 // Ownership also spans an asynchronous provider emitted by a resumed intent
 // receipt. Read-only access and already-cancelled calls remain available.
 foreach (var fault in new[] { "throw", "range" })
@@ -1024,12 +1053,39 @@ foreach (var fault in new[] { "throw", "range" })
     Check(completionStorage.SaveCount == 2 && completionProvider.ActivationCount == 1 && manager.State.Plan.IsLicensed);
 }
 
-// Invalid provider payloads are a different failure: at valid time, cancel the
-// original operation using that same time rather than queuing bad data forever.
-foreach (var deferFirst in new[] { false, true })
+// A clock callback can cancel recovery after a failed write. Acknowledgement
+// makes the write retryable without issuing another write to a cancelled host.
 {
     var completionClock = new CompletionClock();
-    var completionProvider = new ReleaseProvider { ActivationResponse = () => null! };
+    var completionProvider = new ReleaseProvider();
+    var completionStorage = new MemoryStorage
+    {
+        FailOnSave = 1,
+        AfterSave = () => completionClock.Fault = "throw",
+    };
+    using var manager = new LicenseManager(completionProvider, completionStorage, clock: completionClock.Read);
+    await ExpectFailure(manager.ActivateAsync(new("TEST-KEY")), new(LicenseErrorCode.InvalidData));
+    completionStorage.FailOnSave = null;
+    completionClock.Fault = null;
+    using var cancellation = new CancellationTokenSource();
+    completionClock.BeforeRead = cancellation.Cancel;
+    await ExpectCancellation(manager.RetryPersistenceAsync(cancellation.Token));
+    Check(manager.State.HasPendingPersistence && completionStorage.SaveCount == 1 && completionProvider.ActivationCount == 0);
+    await manager.RetryPersistenceAsync();
+    Check(manager.State.Plan.IsLicensed && completionStorage.SaveCount == 3 && completionProvider.ActivationCount == 1);
+}
+
+// Invalid provider payloads are a different failure: at valid time, cancel the
+// original operation using that same time rather than queuing bad data forever.
+foreach (var (deferFirst, oversized) in new[] { (false, false), (true, false), (false, true), (true, true) })
+{
+    var completionClock = new CompletionClock();
+    var completionProvider = new ReleaseProvider
+    {
+        ActivationResponse = () => oversized
+            ? new(new string('x', 1_048_576), "paid", DateTimeOffset.UnixEpoch)
+            : null!,
+    };
     var completionStorage = new MemoryStorage();
     using var manager = new LicenseManager(completionProvider, completionStorage, clock: completionClock.Read);
     completionProvider.BeforeActivate = () =>

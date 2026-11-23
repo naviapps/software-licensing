@@ -4,7 +4,10 @@
 #[path = "../tests/unit/session_wire.rs"]
 mod session_wire_tests;
 use serde::Deserialize;
-use software_licensing::{Activation, Command, ErrorCode, Failure, Policy, Session, Validation};
+use serde_json::value::RawValue;
+use software_licensing::{
+    Activation, Command, EffectCompletion, ErrorCode, Failure, Policy, Reply, Session, Validation,
+};
 use std::sync::Mutex;
 use zeroize::Zeroizing;
 
@@ -41,11 +44,98 @@ unsafe fn input<'a>(data: *const u8, length: usize) -> Result<&'a [u8], Failure>
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn software_licensing_abi_version() -> u32 {
-    4
+    5
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn software_licensing_session_create() -> *mut Mutex<Session> {
     Box::into_raw(Box::new(Mutex::new(Session::default())))
+}
+
+/// # Safety
+/// The session must be live for the call. Null means no saved completion.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn software_licensing_session_has_completion(
+    session: *const Mutex<Session>,
+) -> u32 {
+    u32::from(
+        unsafe { session.as_ref() }
+            .and_then(|session| session.lock().ok())
+            .is_some_and(|session| session.has_deferred_completion()),
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum CompletionCommand {
+    CompleteEffect,
+    ResumeCompletion,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum CompletionKind {
+    Provider,
+    Persisted,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompletionInput<'a> {
+    kind: CompletionKind,
+    #[serde(borrow)]
+    result: Option<&'a RawValue>,
+    success: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompletionRequest<'a> {
+    command: CompletionCommand,
+    now: Option<f64>,
+    id: Option<u64>,
+    #[serde(borrow)]
+    completion: Option<CompletionInput<'a>>,
+    cancelled: Option<bool>,
+}
+
+fn dispatch(session: &Mutex<Session>, bytes: &[u8]) -> Result<Reply, Failure> {
+    if let Ok(command) = software_licensing::decode::<Command>(bytes) {
+        return session.lock().map_err(|_| invalid())?.dispatch(command);
+    }
+    // Completion is a binding protocol. Rust provider drivers continue to
+    // admit their own provider replies through typed Session commands.
+    let request: CompletionRequest<'_> = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    match (
+        request.command,
+        request.id,
+        request.completion,
+        request.cancelled,
+    ) {
+        (CompletionCommand::CompleteEffect, Some(id), Some(completion), None) => {
+            let completion = match (completion.kind, completion.result, completion.success) {
+                (CompletionKind::Provider, result, None) => {
+                    // Decode the original JSON so duplicate keys stay invalid.
+                    EffectCompletion::Provider(
+                        result
+                            .and_then(|raw| software_licensing::decode(raw.get().as_bytes()).ok()),
+                    )
+                }
+                (CompletionKind::Persisted, None, Some(success)) => {
+                    EffectCompletion::Persisted(success)
+                }
+                _ => return Err(invalid()),
+            };
+            session
+                .lock()
+                .map_err(|_| invalid())?
+                .complete_effect(id, completion, request.now)
+        }
+        (CompletionCommand::ResumeCompletion, None, None, Some(cancelled)) => session
+            .lock()
+            .map_err(|_| invalid())?
+            .resume_completion(request.now, cancelled),
+        _ => Err(invalid()),
+    }
 }
 /// # Safety
 /// Session must be live, input readable for length bytes. Calls are serialized;
@@ -58,8 +148,7 @@ pub unsafe extern "C" fn software_licensing_session_dispatch(
 ) -> *mut Json {
     let result = (|| {
         let session = unsafe { session.as_ref() }.ok_or_else(invalid)?;
-        let command: Command = software_licensing::decode(unsafe { input(data, length)? })?;
-        session.lock().map_err(|_| invalid())?.dispatch(command)
+        dispatch(session, unsafe { input(data, length)? })
     })();
     Json::result(result)
 }

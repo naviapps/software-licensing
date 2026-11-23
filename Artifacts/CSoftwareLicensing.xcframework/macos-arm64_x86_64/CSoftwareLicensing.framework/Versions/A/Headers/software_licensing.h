@@ -1,5 +1,6 @@
 #ifndef SOFTWARE_LICENSING_H
 #define SOFTWARE_LICENSING_H
+#define SOFTWARE_LICENSING_ABI_VERSION 5U
 #include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
@@ -14,12 +15,17 @@ typedef struct SoftwareLicensingJsonView {
     size_t length;
 } SoftwareLicensingJsonView;
 
-/* ABI 4 adds raw storage restore. Record version 2 reads and upgrades version 1. */
+/* Record version 2 reads and upgrades version 1. */
 uint32_t software_licensing_abi_version(void);
 SoftwareLicensingSession *software_licensing_session_create(void);
+/* Returns 1 when a completed effect is waiting for a valid timestamp, else 0. */
+uint32_t software_licensing_session_has_completion(const SoftwareLicensingSession *);
 /* Live session; bounded readable UTF-8 input; owns returned JSON. Never logs input.
  * Effect IDs are opaque. Save each persist effect once and acknowledge its exact
- * ID once with persisted. Retry only after failure; every retry has a fresh ID.
+ * ID once with persisted or completeEffect. completeEffect takes id, now and a
+ * completion object with kind provider (result) or persisted (success). A null now
+ * retains the outcome; resumeCompletion takes now and cancelled and applies it once.
+ * Retry only after failure; every retry has a fresh ID.
  * adoptExternallyVerifiedActivation requires host-verified authority, product scope
  * and current entitlement. It performs value checks and persistence, no provider check. */
 SoftwareLicensingJson *software_licensing_session_dispatch(const SoftwareLicensingSession *,

@@ -79,6 +79,12 @@ private final class ValidationClock: Sendable {
 
   func dispatch(_ command: Data) throws -> Data {
     let command = try #require(JSONSerialization.jsonObject(with: command) as? [String: Any])
+    // Host-owned drivers may contain an older Rust session.
+    if let kind = command["command"] as? String,
+      kind == "completeEffect" || kind == "resumeCompletion"
+    {
+      throw LicenseError(.invalidData)
+    }
     let reply = try core.dispatch(command)
     var object = try #require(JSONSerialization.jsonObject(with: reply) as? [String: Any])
     guard let effect = object["effect"] as? [String: Any], effect["kind"] as? String == "provider"
@@ -245,6 +251,7 @@ func failedValidationWritePreservesSavedBytesAndRetriesWithoutCallingProvider(
   var onValidation: (() -> Void)?
   var beforeCompletion: (@MainActor () async -> Void)?
   var activationFailure: (any Error)?
+  var activationResult: LicenseActivation?
   var releaseFailure: LicenseError?
   var validationFailure: LicenseError?
   var validationResult: LicenseValidationResult?
@@ -253,6 +260,7 @@ func failedValidationWritePreservesSavedBytesAndRetriesWithoutCallingProvider(
     onActivation?()
     await beforeCompletion?()
     if let activationFailure { throw activationFailure }
+    if let activationResult { return activationResult }
     return try await Provider(failsDeactivation: false).activate(request)
   }
   func validate(_: LicenseActivation) async throws -> LicenseValidationResult {
@@ -591,19 +599,35 @@ private func completedSavesRecoverAfterTheClockBecomesValid(
   #expect(storage.saveCount == 3 && manager.state.isLicensed)
 }
 
-@Test @MainActor func malformedProviderFailureDoesNotLeaveAnInFlightLease() async throws {
+@Test(arguments: [false, true]) @MainActor
+func malformedProviderResultDoesNotLeaveAnInFlightLease(_ oversized: Bool) async throws {
   let storage = MemoryStorage()
   let provider = ReleaseProvider()
-  provider.activationFailure = LicenseError(.transportFailure, statusCode: -1)
+  if oversized {
+    let data = try LicensingNative.encode([
+      "source": "test", "planIdentifier": String(repeating: "a", count: 1_048_576),
+      "activatedAt": 1_000,
+    ])
+    provider.activationResult = try LicensingNative.decoder().decode(
+      LicenseActivation.self, from: data)
+  } else {
+    provider.activationFailure = LicenseError(.transportFailure, statusCode: -1)
+  }
   let manager = try LicenseManager(
     provider: provider, storage: storage, clock: { Date(timeIntervalSince1970: 2000) })
+  var states = manager.states().makeAsyncIterator()
+  _ = await states.next()
   await #expect(throws: LicenseError(.invalidData)) {
     try await manager.activate(.licenseKey("TEST-KEY"))
   }
+  // The released lease is published before the caller reads state again.
+  let released = try #require(await states.next())
+  #expect(!released.isActivating && released.hasPendingActivation)
   #expect(!manager.state.isActivating && manager.state.hasPendingActivation)
   // Fixture authority confirms the malformed response did not create an instance.
   try manager.confirmActivationNotAppliedAfterExternalVerification()
   provider.activationFailure = nil
+  provider.activationResult = nil
   try await manager.activate(.licenseKey("TEST-KEY"))
   #expect(manager.state.isLicensed && provider.activationCount == 2)
 }
@@ -1120,8 +1144,8 @@ func callbackCancellationCannotGrantAccessOrLeavePendingActivation(_ returnsLate
       try JSONDecoder().decode(LicenseRefreshOutcome.self, from: Data(value.utf8))
     }
   }
-  try LicensingNative.requireABI(4)
-  for oldABI in [UInt32(1), 2, 3] {
+  try LicensingNative.requireABI(5)
+  for oldABI in [UInt32(1), 2, 3, 4] {
     #expect(throws: LicenseError(.incompatibleABIVersion)) {
       try LicensingNative.requireABI(oldABI)
     }

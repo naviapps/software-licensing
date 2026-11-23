@@ -40,6 +40,7 @@ public struct LicenseError: Error, Codable, Equatable, Hashable, Sendable, Local
 /// Internal value bridge shared by the package's optional provider products.
 package enum LicensingNative {
   package enum Function { case value, accessReply }
+  fileprivate static let maximumJSONBytes = 1_048_576
 
   package static func encoder() -> JSONEncoder {
     let encoder = JSONEncoder()
@@ -75,7 +76,9 @@ package enum LicensingNative {
   }
 
   package static func requireABI(_ version: UInt32) throws {
-    guard version == 4 else { throw LicenseError(.incompatibleABIVersion) }
+    guard version == SOFTWARE_LICENSING_ABI_VERSION else {
+      throw LicenseError(.incompatibleABIVersion)
+    }
   }
 
   package static func invoke(_ function: Function, _ object: Any) throws -> Data {
@@ -101,7 +104,7 @@ package enum LicensingNative {
     guard let owner else { throw LicenseError(.invalidData) }
     defer { software_licensing_json_destroy(owner) }
     let view = software_licensing_json_view(owner)
-    guard let bytes = view.data, view.length <= 1_048_576 else {
+    guard let bytes = view.data, view.length <= maximumJSONBytes else {
       throw LicenseError(.invalidData)
     }
     let data = Data(bytes: bytes, count: view.length)
@@ -117,15 +120,54 @@ final class LicenseSession: @unchecked Sendable {
   private let handle: OpaquePointer
 
   init() {
-    precondition(software_licensing_abi_version() == 4, "SoftwareLicensing ABI mismatch")
+    precondition(
+      software_licensing_abi_version() == SOFTWARE_LICENSING_ABI_VERSION,
+      "SoftwareLicensing ABI mismatch")
     handle = software_licensing_session_create()!
   }
 
   deinit { software_licensing_session_destroy(handle) }
 
+  var hasCompletion: Bool { software_licensing_session_has_completion(handle) != 0 }
+
+  func completeProvider(_ id: UInt64, result: [String: Any], now: TimeInterval) throws -> Data {
+    var completion: [String: Any] = [
+      "command": "completeEffect", "id": id,
+      "completion": ["kind": "provider", "result": result], "now": timestamp(now),
+    ]
+    if let data = try? LicensingNative.encode(completion),
+      data.count <= LicensingNative.maximumJSONBytes
+    {
+      return try dispatch(data)
+    }
+    // Submit the completed effect even when its result cannot cross the ABI.
+    // Rust retains or releases the effect without repeating the provider call.
+    completion["completion"] = ["kind": "provider"]
+    return try dispatch(completion)
+  }
+
+  func completePersistence(_ id: UInt64, success: Bool, now: TimeInterval) throws -> Data {
+    try dispatch([
+      "command": "completeEffect", "id": id,
+      "completion": ["kind": "persisted", "success": success], "now": timestamp(now),
+    ])
+  }
+
+  func resumeCompletion(now: TimeInterval, cancelled: Bool) throws -> Data {
+    try dispatch(["command": "resumeCompletion", "now": timestamp(now), "cancelled": cancelled])
+  }
+
+  private func timestamp(_ instant: TimeInterval) -> Any {
+    if instant.isFinite { return instant }
+    return NSNull()
+  }
+
   func dispatch(_ object: [String: Any]) throws -> Data {
-    let data = try LicensingNative.encode(object)
-    return try data.withUnsafeBytes { bytes in
+    try dispatch(LicensingNative.encode(object))
+  }
+
+  private func dispatch(_ data: Data) throws -> Data {
+    try data.withUnsafeBytes { bytes in
       try LicensingNative.consume(
         software_licensing_session_dispatch(
           handle, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count))

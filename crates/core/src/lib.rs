@@ -9,7 +9,9 @@ pub use model::*;
 pub use persistence::{
     PendingActivation, Record, decode_record_json, decode_stored_record, restore,
 };
-pub use session::{Command, Effect, LicenseRefreshOutcome, ProviderReply, Reply, Session};
+pub use session::{
+    Command, Effect, EffectCompletion, LicenseRefreshOutcome, ProviderReply, Reply, Session,
+};
 
 /// Maximum JSON command, normalized custom-storage record or provider response size.
 pub const MAX_BYTES: usize = 1024 * 1024;

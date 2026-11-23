@@ -12,3 +12,6 @@ serde.workspace = true
 serde_json.workspace = true
 unicode-general-category.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }

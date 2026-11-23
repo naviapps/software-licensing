@@ -41,7 +41,8 @@ static void rejected_receipt(SoftwareLicensingJson *value) {
     software_licensing_json_destroy(value);
 }
 int main(void) {
-    assert(software_licensing_abi_version() == 4);
+    assert(software_licensing_abi_version() == SOFTWARE_LICENSING_ABI_VERSION);
+    assert(software_licensing_session_has_completion(NULL) == 0);
     software_licensing_json_destroy(NULL);
     software_licensing_session_destroy(NULL);
     SoftwareLicensingJson *invalid = software_licensing_session_dispatch(NULL, NULL, 0);
@@ -104,9 +105,20 @@ int main(void) {
     software_licensing_json_destroy(pending);
     char receipt[256];
     snprintf(receipt, sizeof(receipt),
-             "{\"command\":\"persisted\",\"id\":%" PRIu64 ",\"success\":true,\"now\":1000}",
+             "{\"command\":\"completeEffect\",\"id\":%" PRIu64
+             ",\"completion\":{\"kind\":\"persisted\",\"success\":true},\"now\":null}",
              receipt_id);
-    success(dispatch(session, receipt));
+    SoftwareLicensingJson *deferred = dispatch(session, receipt);
+    assert(software_licensing_json_view(deferred).code == 1);
+    char invalid_time[256];
+    copy_json(deferred, invalid_time, sizeof(invalid_time));
+    assert(strstr(invalid_time, "\"code\":\"invalidData\""));
+    software_licensing_json_destroy(deferred);
+    assert(software_licensing_session_has_completion(session) == 1);
+    rejected_receipt(dispatch(session, receipt));
+    success(
+        dispatch(session, "{\"command\":\"resumeCompletion\",\"cancelled\":false,\"now\":1001}"));
+    assert(software_licensing_session_has_completion(session) == 0);
     rejected_receipt(dispatch(session, receipt));
     software_licensing_session_destroy(session);
     puts("C ABI ownership and saved receipt routing passed.");

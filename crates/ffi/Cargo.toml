@@ -9,11 +9,11 @@ rust-version.workspace = true
 
 [lib]
 name = "software_licensing"
-crate-type = ["staticlib", "cdylib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 software-licensing.workspace = true
 software-licensing-windows.workspace = true
 zeroize.workspace = true

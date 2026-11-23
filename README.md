@@ -226,7 +226,7 @@ or retry persistence to restore the saved record.
 State and refresh-eligibility reads continue observing the committed session while
 reload loads storage. Other mutations remain excluded until the replacement is ready.
 
-Rust/C ABI is **4**, independently of the storage schema. An ABI mismatch reports
+Rust/C ABI is **5**, independently of the storage schema. An ABI mismatch reports
 `incompatibleABIVersion` / `IncompatibleAbiVersion` before reading storage.
 Ship matching Rust/C, Swift/.NET bindings and native artifacts together.
 `unsupportedVersion` denotes a persisted-record version error only; existing
@@ -289,9 +289,9 @@ the saved record can be restored.
 A remotely created activation cannot be made durable if storage never succeeds
 before the process exits. Surface the storage failure and retry it before exiting.
 
-If a custom clock becomes invalid after a native save or provider call completes,
-the binding retains that completed result in memory until Rust can accept it at a
-valid time. Access is never granted using an invalid time. After the clock recovers,
+If a custom clock becomes unavailable after a save or provider call completes,
+the Rust session retains the outcome until it can apply it at a valid time.
+Access is never granted using an invalid time. After the clock recovers,
 `retryPersistence()` / `RetryPersistenceAsync()` acknowledges the saved result and
 continues recovery without repeating a completed provider call or successful save.
 A failed save becomes retryable after its failure is acknowledged. Cancellation

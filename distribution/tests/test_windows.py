@@ -102,7 +102,7 @@ class WindowsOutputTests(unittest.TestCase):
         fixture = root / "fixtures/consumers/dotnet/Program.cs"
         fixture.parent.mkdir(parents=True)
         fixture.write_text('System.Console.WriteLine("synthetic");')
-        (root / "mise.toml").write_text('[tools]\ndotnet = "10.0.403"\n')
+        (root / "global.json").write_text('{"sdk":{"version":"10.0.403","rollForward":"disable"}}')
         (root / "native.toml").write_bytes(
             b'[[artifacts]]\nid = "sdk"\nsymbol_prefix = "software_licensing_"\nminimum_macos = "26.0"\n'
         )

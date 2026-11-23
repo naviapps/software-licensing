@@ -18,11 +18,6 @@ public sealed class LicenseManager : IDisposable
     private bool restorationBlocked;
     private bool restoring;
     private bool disposed;
-    private sealed record Completion(string Command, ulong Id, object Result)
-    {
-        public bool IsFailedSave => Command == "persisted" && Result is false;
-    }
-    private Completion? deferredCompletion;
     private bool resumingCompletion;
     private readonly List<Channel<LicenseState>> observers = [];
     private LicenseState? lastSessionState;
@@ -244,17 +239,22 @@ public sealed class LicenseManager : IDisposable
         lock (gate) { return SendAt(command, now, values); }
     }
     // Caller holds gate; no host callbacks or synchronous observer continuations run here.
-    private JsonElement SendAt(string command, double now, params (string, object?)[] values)
+    private JsonElement SendAt(string command, double? now, params (string, object?)[] values)
     {
-        ObjectDisposedException.ThrowIf(disposed, this);
-        // Reads keep observing the committed session until its replacement is ready.
-        if (restoring && command is not ("snapshot" or "needsRefresh"))
-            throw new LicenseException(LicenseErrorCode.OperationInProgress);
+        RequireDispatch(allowDuringRestore: command is "snapshot" or "needsRefresh" or "completeEffect");
         var input = new Dictionary<string, object?> { ["command"] = command, ["now"] = now };
         foreach (var (name, value) in values) if (value is not null) input[name] = value;
-        var reply = Native.Call(session, input);
-        var state = reply.GetProperty("state").Deserialize<LicenseState>(Native.Json)!;
-        Publish(state);
+        return Observe(Native.Call(session, input));
+    }
+    private void RequireDispatch(bool allowDuringRestore = false)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        // Reads and outstanding receipts still belong to the committed session.
+        if (restoring && !allowDuringRestore) throw new LicenseException(LicenseErrorCode.OperationInProgress);
+    }
+    private JsonElement Observe(JsonElement reply)
+    {
+        Publish(reply.GetProperty("state").Deserialize<LicenseState>(Native.Json)!);
         return reply;
     }
     private void Publish(LicenseState state)
@@ -326,80 +326,37 @@ public sealed class LicenseManager : IDisposable
         catch { throw new LicenseException(LicenseErrorCode.InvalidData); }
     }
 
-    private JsonElement Complete(Completion completion)
+    private JsonElement CompleteSave(ulong id, bool success)
     {
-        double now;
-        try
-        {
-            // The host clock can throw or re-enter from another thread.
-            now = Now;
-        }
-        catch
-        {
-            // Do not publish this result while its original driver is still
-            // acquiring/validating time: a reentrant retry must not steal it.
-            lock (gate) { deferredCompletion = completion; }
-            throw new LicenseException(LicenseErrorCode.InvalidData);
-        }
+        // A reentrant clock observes an outstanding effect until this receipt is submitted.
+        var now = ReadObservationTime();
+        lock (gate) { return SendAt("completeEffect", now, ("id", id), ("completion", new { kind = "persisted", success })); }
+    }
+    private JsonElement CompleteProvider(ulong id, object result)
+    {
+        var now = ReadObservationTime();
         lock (gate)
         {
-            // Rust alone validates the captured clock, before a malformed
-            // provider payload can be confused with an invalid time.
-            try { Read(SendAt("snapshot", now)); }
-            catch (LicenseException error) when (error.Failure.Code == LicenseErrorCode.InvalidData)
-            {
-                deferredCompletion = completion;
-                throw new LicenseException(LicenseErrorCode.InvalidData);
-            }
-            JsonElement reply;
-            try
-            {
-                reply = SendAt(completion.Command, now, ("id", completion.Id),
-                    (completion.Command == "persisted" ? "success" : "result", completion.Result));
-            }
-            catch
-            {
-                if (completion.Command == "provider")
-                {
-                    // The timestamp is known valid. Release a malformed custom
-                    // provider reply without reading the host clock again.
-                    try
-                    {
-                        SendAt("cancel", now, ("id", completion.Id));
-                        if (ReferenceEquals(deferredCompletion, completion)) deferredCompletion = null;
-                    }
-                    catch (LicenseException) { }
-                }
-                throw;
-            }
-            // A reply containing an operation/storage error still accepted the
-            // receipt. Its error is handled by the driver, after clearing it.
-            if (ReferenceEquals(deferredCompletion, completion)) deferredCompletion = null;
-            return reply;
+            RequireDispatch(allowDuringRestore: true);
+            return Observe(Native.CompleteProvider(session, id, now, result));
         }
     }
     private async Task<bool> ResumeCompletionAsync(CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        Completion completion;
         lock (gate)
         {
+            ObjectDisposedException.ThrowIf(disposed, this);
             if (resumingCompletion) throw new LicenseException(LicenseErrorCode.OperationInProgress);
-            if (deferredCompletion is not { } pending) return false;
-            completion = pending;
+            if (Native.HasCompletion(session) == 0) return false;
             resumingCompletion = true;
         }
         try
         {
             token.ThrowIfCancellationRequested();
-            var reply = Complete(completion);
-            if (completion.IsFailedSave)
-            {
-                // Acknowledge the failed attempt before asking Rust for a new
-                // save. The failed receipt itself is never sent a second time.
-                token.ThrowIfCancellationRequested();
-                reply = Send("retryPersistence");
-            }
+            var now = ReadObservationTime();
+            JsonElement reply;
+            lock (gate) { reply = SendAt("resumeCompletion", now, ("cancelled", token.IsCancellationRequested)); }
             await DriveAsync(reply, token).ConfigureAwait(false);
             return true;
         }
@@ -413,8 +370,7 @@ public sealed class LicenseManager : IDisposable
             var success = true;
             try { storage.Save(JsonSerializer.SerializeToUtf8Bytes(effect.GetProperty("record"))); }
             catch { success = false; }
-            reply = Complete(new("persisted", id, success));
-            if (!success) throw new LicenseException(LicenseErrorCode.StorageFailure);
+            reply = CompleteSave(id, success);
         }
         return reply;
     }
@@ -468,7 +424,7 @@ public sealed class LicenseManager : IDisposable
                 };
             }
             catch (Exception e) { result = new { kind = "failed", failure = (e as LicenseException)?.Failure ?? new(LicenseErrorCode.TransportFailure) }; }
-            reply = Complete(new("provider", id, result));
+            reply = CompleteProvider(id, result);
         }
     }
     public void Dispose()

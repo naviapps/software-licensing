@@ -18,11 +18,12 @@ internal sealed class SessionHandle : SafeHandleZeroOrMinusOneIsInvalid
 internal static class Native
 {
     private const string Library = "software_licensing";
+    private const int MaximumJsonBytes = 1_048_576;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     internal static readonly JsonSerializerOptions Json = Options();
     internal static void RequireAbi(uint version)
     {
-        if (version != 4) throw new LicenseException(LicenseErrorCode.IncompatibleAbiVersion);
+        if (version != 5) throw new LicenseException(LicenseErrorCode.IncompatibleAbiVersion);
     }
     private static void CheckAbi()
     {
@@ -60,6 +61,8 @@ internal static class Native
     private static extern IntPtr AccessReply(byte[] data, nuint length);
     [DllImport(Library, EntryPoint = "software_licensing_session_dispatch", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr Dispatch(SessionHandle handle, byte[] data, nuint length);
+    [DllImport(Library, EntryPoint = "software_licensing_session_has_completion", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern uint HasCompletion(SessionHandle handle);
     [DllImport(Library, EntryPoint = "software_licensing_session_stage_record", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr SessionStageRecord(SessionHandle handle, byte[] record, nuint length);
     [DllImport(Library, EntryPoint = "software_licensing_windows_storage", CallingConvention = CallingConvention.Cdecl)]
@@ -75,7 +78,7 @@ internal static class Native
         try
         {
             var view = JsonView(owner);
-            if (view.Data == IntPtr.Zero || view.Length > 1048576) throw new LicenseException(LicenseErrorCode.InvalidData);
+            if (view.Data == IntPtr.Zero || view.Length > MaximumJsonBytes) throw new LicenseException(LicenseErrorCode.InvalidData);
             var bytes = new byte[(int)view.Length];
             Marshal.Copy(view.Data, bytes, 0, bytes.Length);
             using var document = JsonDocument.Parse(bytes);
@@ -88,6 +91,21 @@ internal static class Native
     {
         CheckAbi();
         var data = JsonSerializer.SerializeToUtf8Bytes(command, Json);
+        return Consume(Dispatch(handle, data, (nuint)data.Length));
+    }
+    internal static JsonElement CompleteProvider(SessionHandle handle, ulong id, double? now, object result)
+    {
+        CheckAbi();
+        var input = new { command = "completeEffect", id, now, completion = new { kind = "provider", result = (object?)result } };
+        byte[]? data;
+        try { data = JsonSerializer.SerializeToUtf8Bytes(input, Json); }
+        catch (JsonException) { data = null; }
+        if (data is null || data.Length > MaximumJsonBytes)
+        {
+            // Rust still needs to acknowledge the effect and release its lease.
+            var invalid = input with { completion = input.completion with { result = null } };
+            data = JsonSerializer.SerializeToUtf8Bytes(invalid, Json);
+        }
         return Consume(Dispatch(handle, data, (nuint)data.Length));
     }
     internal static void StageStoredRecord(SessionHandle handle, byte[] record)

@@ -12,6 +12,10 @@ impl SessionHandle {
 
     fn dispatch(&self, command: Value) -> (u32, Value) {
         let input = serde_json::to_vec(&command).unwrap();
+        self.dispatch_bytes(&input)
+    }
+
+    fn dispatch_bytes(&self, input: &[u8]) -> (u32, Value) {
         let result = unsafe {
             ffi::software_licensing_session_dispatch(self.0.as_ptr(), input.as_ptr(), input.len())
         };
@@ -48,6 +52,29 @@ impl SessionHandle {
     }
 }
 
+#[test]
+fn duplicate_provider_fields_release_the_lease_without_clearing_the_journal() {
+    let session = SessionHandle::new();
+    session.restore(1000);
+    let pending = session.send(json!({
+        "command":"activate", "licenseKey":"FIXTURE-KEY", "now":1000
+    }));
+    let (id, _) = write(&pending);
+    let provider = session.persisted(id, true, 1000);
+    let id = provider["effect"]["id"].as_u64().unwrap();
+    let duplicate = format!(
+        r#"{{"command":"completeEffect","id":{id},"now":1001,
+              "completion":{{"kind":"provider","result":{{"kind":"failed",
+              "failure":{{"code":"transportFailure","code":"invalidLicense"}}}}}}}}"#
+    );
+    let (code, reply) = session.dispatch_bytes(duplicate.as_bytes());
+    assert_eq!(code, 0);
+    assert_eq!(reply["error"]["code"], "invalidData");
+    assert_eq!(reply["state"]["isActivating"], false);
+    assert_eq!(reply["state"]["hasPendingActivation"], true);
+    assert_eq!(reply["effect"], Value::Null);
+}
+
 impl Drop for SessionHandle {
     fn drop(&mut self) {
         unsafe { ffi::software_licensing_session_destroy(self.0.as_ptr()) };
@@ -76,7 +103,7 @@ fn write(reply: &Value) -> (u64, &Value) {
 
 #[test]
 fn failed_saves_require_current_receipts_and_preserve_rejected_access_on_reopen() {
-    assert_eq!(ffi::software_licensing_abi_version(), 4);
+    assert_eq!(ffi::software_licensing_abi_version(), 5);
     let session = SessionHandle::new();
     session.restore(1000);
     let intent = session.send(json!({
