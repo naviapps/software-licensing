@@ -85,8 +85,8 @@ class WindowsOutputTests(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    "NAVI_CI_SOURCE_COMMIT": "a" * 40,
-                    "NAVI_CI_SOURCE_FINGERPRINT": "b" * 64,
+                    "VM_RUNNER_SOURCE_COMMIT": "a" * 40,
+                    "VM_RUNNER_SOURCE_FINGERPRINT": "b" * 64,
                     "GITHUB_SHA": "c" * 40,
                 },
                 clear=True,
@@ -135,13 +135,14 @@ class WindowsOutputTests(unittest.TestCase):
         environment = {
             "DOTNET_BIN": str(dotnet),
             "Dotnet_Host_Path": "unexpected ARM64 executable",
-            "NAVI_CI_SOURCE_COMMIT": source[0],
-            "NAVI_CI_SOURCE_FINGERPRINT": source[1],
+            "VM_RUNNER_SOURCE_COMMIT": source[0],
+            "VM_RUNNER_SOURCE_FINGERPRINT": source[1],
         }
         if retain:
-            environment["NAVI_CI_ARTIFACTS"] = str(ci)
+            environment["VM_RUNNER_ARTIFACTS_DIR"] = str(ci)
         env = dict(environment, PATH="owned-toolchain", CARGO_TARGET_DIR=str(root / "redirected"))
         local_modules = {
+            "vm_environment": load("vm_environment"),
             "windows_delivery": load("windows_delivery"),
             "windows": Mock(),
             "bindings": Mock(),

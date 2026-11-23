@@ -58,6 +58,7 @@ def main(argv=None):
     }
     host = windows.host_architecture()
     env, tools, dotnet = windows.native_environment(host, environment, target_architecture="x64")
+    artifact_root = load("vm_environment").artifacts_dir(env)
     env["RUSTUP_AUTO_INSTALL"] = "0"
     sdk_version = subprocess.check_output(
         [str(dotnet), "--version"], cwd=ROOT, env=env, text=True
@@ -202,7 +203,6 @@ def main(argv=None):
             "packages": {package.name: package_hash},
             "dllSha256": expected[dll.name],
         }
-        artifact_root = Path(env["NAVI_CI_ARTIFACTS"]) if env.get("NAVI_CI_ARTIFACTS") else None
         publish_x64(
             package, receipt, output_dir=output, artifact_root=artifact_root, tooling=artifacts
         )

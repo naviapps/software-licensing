@@ -68,6 +68,8 @@ mise run sdk-tooling -- python fixtures/distribution/windows.py --architecture x
 This verifies a single DLL across C, .NET recovery and DPAPI fixtures, and the
 isolated NuGet consumer. The package and receipt are retained together under
 `.native-build/win-x64/<version>/`. Point local package restore at that directory.
+When `VM_RUNNER_ARTIFACTS_DIR` is supplied, the same files are also retained there
+under `win-x64/<version>/`.
 The receipt records the SDK and shared build helper hashes. The GitHub-hosted
 distribution job runs on x64. On Windows ARM64, run the local command to verify x64
 emulation.

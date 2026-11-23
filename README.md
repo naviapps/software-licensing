@@ -436,11 +436,11 @@ fixture uses the copied framework, header and notices. Both exercise synthetic
 entitlement with a fixed clock.
 
 Maintainers can run the macOS and Windows x64 distribution gates in the
-SDK Tooling repository. Substitute the full SDK commit SHA on `main`:
+SDK Tooling repository. Run this from the intended commit on `main`:
 
 ```sh
 gh workflow run check-sdk-distribution.yml -R naviapps/sdk-tooling \
-  -f sdk=software-licensing -f revision=FULL_SDK_COMMIT_SHA
+  -f sdk=software-licensing -f "revision=$(git rev-parse HEAD)"
 ```
 
 ## Static checks
