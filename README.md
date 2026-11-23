@@ -40,7 +40,7 @@ The SDK does not implement checkout, billing, merchant APIs or license issuance.
 
 ## Requirements
 
-- Swift 6.4, macOS 26 or later. Checked-in universal framework: ARM64 and Intel.
+- Swift 6.3 and macOS 26 or later. The universal framework supports ARM64 and Intel.
 - Rust 1.99.1. See `rust-toolchain.toml` and the locked registry dependencies.
 - .NET 10. The Windows package supplies `win-x64` and is tested with x64 .NET
   under emulation on Windows 11 ARM64 (build 26100 or later).
@@ -55,7 +55,7 @@ Select a published full 40-character Git commit revision. Replace the placeholde
 below before resolving this consumer package:
 
 ```swift
-// swift-tools-version: 6.4
+// swift-tools-version: 6.3
 import PackageDescription
 
 let package = Package(
@@ -406,7 +406,7 @@ gate separately from `make check`. This does not exercise Git authentication,
 production licensing or Windows DPAPI.
 
 From the SDK root, review `mise.toml` and select its pinned developer tools.
-Xcode must supply Swift 6.4 and the macOS 26 SDK or later:
+Xcode must supply Swift 6.3 and the macOS 26 SDK or later:
 
 ```sh
 mise trust mise.toml
@@ -445,9 +445,10 @@ for verified caches, offline use and source overrides. Ordinary SwiftPM and NuGe
 consumers do not need that setup.
 
 GitHub Actions runs Rust, C and .NET fixtures on macOS and Windows x64. The
-macOS workflow also runs strict Swift tests and verifies the tracked framework
-receipt. The Windows workflow verifies the installed x64 NuGet package. These
-checks use synthetic fixture providers.
+macOS workflow runs strict Swift tests with Xcode 26.6 and Xcode 27, and
+verifies the tracked framework receipt with Xcode 27. The Windows workflow
+verifies the installed x64 NuGet package. These checks use synthetic fixture
+providers.
 
 ## Static checks
 
