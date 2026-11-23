@@ -15,7 +15,7 @@ import tomllib
 from contextlib import ExitStack
 from pathlib import Path
 
-from _tooling import load_candidate, verify
+from _tooling import load, support_inputs
 from dotnet_consumer import PACKAGE, check_package
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -136,20 +136,14 @@ def publish_x64(package, receipt, *, output_dir, artifact_root, tooling):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--architecture", choices=("x64",), default="x64")
-    parser.add_argument(
-        "--tooling-source", type=Path, required=True, help="Local reviewed SDK tooling checkout"
-    )
-    parser.add_argument(
-        "--tooling-revision", required=True, help="Exact Git commit of the local SDK tooling"
-    )
-    args = parser.parse_args(argv)
+    parser.parse_args(argv)
     if sys.platform != "win32" or sys.getwindowsversion().build < 26100:
         raise ValueError("Windows 11 build 26100 or later is required for the DPAPI fixture")
     source = acceptance_source()
-    selected = load_candidate(args.tooling_source, args.tooling_revision)
-    windows = selected("windows")
-    bindings = selected("bindings")
-    artifacts = selected("artifacts")
+    tool_inputs = support_inputs()
+    windows = load("windows")
+    bindings = load("bindings")
+    artifacts = load("artifacts")
     environment = {
         key.upper(): value for key, value in os.environ.items() if key.upper() != "DOTNET_HOST_PATH"
     }
@@ -161,7 +155,7 @@ def main(argv=None):
     ).strip()
     if sdk_version != tomllib.loads((ROOT / "mise.toml").read_text())["tools"]["dotnet"]:
         raise ValueError("Use the pinned x64 .NET SDK version from mise.toml")
-    native = selected("native").NativeBuilder(
+    native = load("native").NativeBuilder(
         ROOT,
         symbol_prefix="software_licensing_",
         minimum_macos="26.0",
@@ -276,7 +270,8 @@ def main(argv=None):
             raise ValueError("Packaged DLL staging changed during acceptance")
         if source != acceptance_source():
             raise ValueError("Windows x64 acceptance source changed")
-        verify(args.tooling_source, args.tooling_revision)
+        if tool_inputs != support_inputs():
+            raise ValueError("Windows x64 build tools changed during acceptance")
         commit, fingerprint = source
         receipt = {
             "source": commit,
@@ -287,7 +282,7 @@ def main(argv=None):
             "execution": "x64-native" if host == "x64" else "x64-emulated-on-arm64",
             "version": native.version,
             "toolchain": toolchain,
-            "sdkToolingCommit": args.tooling_revision,
+            "toolInputs": tool_inputs,
             "dotnetVersion": sdk_version,
             "run": env.get("GITHUB_RUN_ID"),
             "attempt": env.get("GITHUB_RUN_ATTEMPT"),

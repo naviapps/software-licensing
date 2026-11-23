@@ -74,20 +74,19 @@ From the SDK root, follow the
 with a clean committed checkout on an owned Windows 11 ARM64 worker. Prepare
 native ARM64 Python and the pinned ARM64 Rust toolchain with the
 `x86_64-pc-windows-msvc` standard library. Select `HostARM64\x64` with
-`VsDevCmd.bat -host_arch=arm64 -arch=x64`, set `DOTNET_BIN` to the absolute
-path of the pinned x64 .NET SDK, and supply the approved full commit SHA of
-the local SDK Tooling candidate.
+`VsDevCmd.bat -host_arch=arm64 -arch=x64` and set `DOTNET_BIN` to the absolute
+path of the pinned x64 .NET SDK.
 
 ```powershell
-python -E -S -B tools/windows.py --architecture x64 `
-  --tooling-source C:\owned\sdk-tooling --tooling-revision $approvedRevision
+python -E -S -B tools/windows.py --architecture x64
 ```
 
 This verifies a single DLL across C, .NET recovery and DPAPI fixtures, and the
 isolated NuGet consumer. The package and receipt are retained together under
 `.native-build/win-x64/<version>/`. Point local package restore at that directory.
-The GitHub-hosted job runs native x64 when the pinned tooling is publicly
-accessible. On Windows ARM64, run the local command to verify x64 emulation.
+The receipt records the build helper hashes from the SDK checkout. The
+GitHub-hosted job runs on x64. On Windows ARM64, run the local command to verify
+x64 emulation.
 
 ### macOS checks
 

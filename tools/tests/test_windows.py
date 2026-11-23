@@ -22,9 +22,7 @@ def load_driver():
     driver = importlib.util.module_from_spec(spec)
     with (
         patch.object(sys, "path", [str(tools), *sys.path]),
-        patch.dict(
-            sys.modules, {"_tooling": SimpleNamespace(load_candidate=Mock(), verify=Mock())}
-        ),
+        patch.dict(sys.modules, {"_tooling": SimpleNamespace(load=Mock(), support_inputs=Mock())}),
     ):
         spec.loader.exec_module(driver)
     return driver
@@ -80,6 +78,10 @@ class WindowsOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             self.exercise_driver(Path(temporary), mutate=True)
 
+    def test_rejects_changed_checkout_tools_before_publishing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.exercise_driver(Path(temporary), change_tools=True)
+
     def test_rejects_captured_source_for_a_different_actions_revision(self):
         driver = load_driver()
         with patch.dict(
@@ -94,7 +96,9 @@ class WindowsOutputTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "differs from the Actions revision"):
                 driver.acceptance_source()
 
-    def exercise_driver(self, root, *, host="arm64", stale=False, retain=False, mutate=False):
+    def exercise_driver(
+        self, root, *, host="arm64", stale=False, retain=False, mutate=False, change_tools=False
+    ):
         driver = load_driver()
         fixture = root / "fixtures/dotnet-consumer/Program.cs"
         fixture.parent.mkdir(parents=True)
@@ -119,7 +123,7 @@ class WindowsOutputTests(unittest.TestCase):
 
         dotnet = root / "dotnet-x64/dotnet.exe"
         source = ("a" * 40, "b" * 64)
-        tooling_commit = "c" * 40
+        tool_inputs = {"tools/_tooling.py": "c" * 64}
         msvc_targets = {"arm64": "aarch64-pc-windows-msvc", "x64": driver.TARGET}
         toolchain = {"backend": "msvc", "host": msvc_targets[host], "target": driver.TARGET}
         receipt = {
@@ -136,17 +140,17 @@ class WindowsOutputTests(unittest.TestCase):
         if retain:
             environment["NAVI_CI_ARTIFACTS"] = str(ci)
         env = dict(environment, PATH="owned-toolchain", CARGO_TARGET_DIR=str(root / "redirected"))
-        candidate_modules = {
+        local_modules = {
             "windows": Mock(),
             "bindings": Mock(),
             "native": Mock(),
             "artifacts": artifacts(),
         }
-        windows = candidate_modules["windows"]
+        windows = local_modules["windows"]
         windows.host_architecture.return_value = host
         windows.MSVC_TARGETS = msvc_targets
-        bindings = candidate_modules["bindings"]
-        native = candidate_modules["native"].NativeBuilder.return_value
+        bindings = local_modules["bindings"]
+        native = local_modules["native"].NativeBuilder.return_value
         native.version = "0.1.0"
         windows.native_environment.return_value = (env, root / "MSVC", dotnet)
         windows.build_library.return_value = built
@@ -192,29 +196,29 @@ class WindowsOutputTests(unittest.TestCase):
                 create=True,
             ),
             patch.dict(os.environ, environment, clear=True),
-            patch.object(driver, "load_candidate", return_value=candidate_modules.get) as select,
-            patch.object(driver, "verify") as verify,
+            patch.object(driver, "load", side_effect=local_modules.__getitem__),
+            patch.object(
+                driver,
+                "support_inputs",
+                side_effect=[tool_inputs, {} if change_tools else tool_inputs],
+            ),
             patch.object(driver.subprocess, "run") as commands,
             patch.object(driver.subprocess, "check_output", side_effect=check_output),
             patch.object(driver.platform, "platform", return_value="win32-arm64"),
             patch("builtins.print"),
         ):
-            options = [
-                "--tooling-source",
-                str(root / "sdk-tooling"),
-                "--tooling-revision",
-                tooling_commit,
-            ]
             if mutate:
                 with self.assertRaisesRegex(ValueError, "Staged DLL or import library differs"):
-                    driver.main(options)
+                    driver.main([])
                 self.assertFalse((output / driver.RID).exists())
-                verify.assert_not_called()
                 return
-            driver.main(options)
+            if change_tools:
+                with self.assertRaisesRegex(ValueError, "build tools changed during acceptance"):
+                    driver.main([])
+                self.assertFalse((output / driver.RID).exists())
+                return
+            driver.main([])
 
-        select.assert_called_once_with(root / "sdk-tooling", tooling_commit)
-        verify.assert_called_once_with(root / "sdk-tooling", tooling_commit)
         expected_environment = dict(environment)
         expected_environment.pop("Dotnet_Host_Path")
         windows.native_environment.assert_called_once_with(
@@ -224,7 +228,7 @@ class WindowsOutputTests(unittest.TestCase):
             native, env, root / "MSVC", "x64", native_host=host
         )
         windows.verify_artifact.assert_called_once_with(native, "x64", environment=env)
-        candidate_modules["native"].NativeBuilder.assert_called_once_with(
+        local_modules["native"].NativeBuilder.assert_called_once_with(
             root,
             symbol_prefix="software_licensing_",
             minimum_macos="26.0",
@@ -264,7 +268,7 @@ class WindowsOutputTests(unittest.TestCase):
         execution = "x64-native" if host == "x64" else "x64-emulated-on-arm64"
         self.assertEqual(retained["execution"], execution)
         self.assertEqual(retained["toolchain"], toolchain)
-        self.assertEqual(retained["sdkToolingCommit"], tooling_commit)
+        self.assertEqual(retained["toolInputs"], tool_inputs)
         self.assertEqual(retained["nativeBuildReceiptSha256"], driver.sha256(receipt_path))
         self.assertEqual(retained["dllSha256"], driver.sha256(library))
         self.assertEqual(retained["packages"], {package_name: package_hash})
@@ -292,11 +296,11 @@ class WindowsOutputTests(unittest.TestCase):
                 return_value=SimpleNamespace(build=26000),
                 create=True,
             ),
-            patch.object(driver, "load_candidate") as select,
+            patch.object(driver, "load") as load,
             self.assertRaisesRegex(ValueError, "26100 or later"),
         ):
-            driver.main(["--tooling-source", "candidate", "--tooling-revision", "a" * 40])
-        select.assert_not_called()
+            driver.main([])
+        load.assert_not_called()
 
     def test_external_failure_preserves_previous_pair_in_both_locations(self):
         driver = load_driver()

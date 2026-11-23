@@ -10,7 +10,7 @@ Start with [SwiftPM installation](#swiftpm-installation),
 [.NET package guide](https://github.com/naviapps/software-licensing/blob/main/bindings/dotnet/README.md). The
 [storage and recovery contract](#storage-and-recovery) applies to every binding.
 Maintainers use [build and acceptance](#build-and-acceptance) and
-[shared developer setup](#development-tooling).
+[development tooling](#development-tooling).
 
 ## Layout
 
@@ -418,8 +418,8 @@ mise exec -- make check
 The checked-in framework is ready for validation after a fresh clone. Rebuild it
 with `mise exec -- make native` after changing native inputs, before running checks.
 
-`tools/native.py` delegates to the pinned shared builder for the universal macOS 26
-framework, locked dependencies, notices, exact C exports and deployment targets.
+`tools/native.py` builds and verifies the universal macOS 26 framework, locked
+dependencies, notices, exact C exports and deployment targets.
 Its receipt binds production inputs and build-tool bytes to the artifact hashes.
 `make check` verifies that existing framework, then runs Rust, Swift, C ownership,
 .NET fixtures and portable build-driver regressions without rebuilding the framework.
@@ -439,10 +439,8 @@ separate evidence.
 
 ## Development tooling
 
-Developer commands use the immutable `sdk-tooling` revision in
-`tools/tooling-sources.json`. See [shared developer setup](https://github.com/naviapps/sdk-tooling#readme)
-for verified caches, offline use and source overrides. Ordinary SwiftPM and NuGet
-consumers do not need that setup.
+Developer commands use the scripts included in this checkout. The
+[maintainer setup](#build-and-acceptance) installs the tools for these commands.
 
 GitHub Actions runs the same strict Swift tests and standalone Swift consumer
 on macOS 26 with Xcode 26.6 and macOS 27 with Xcode 27. A single macOS 27
@@ -453,9 +451,9 @@ checks use synthetic fixture providers.
 ## Static checks
 
 `mise install` prepares pinned developer tools. Run `mise run lint` before builds
-or `mise run format` to format owned source. Compiler and native acceptance remain
-in the existing check targets. Shared policy comes from the pinned SDK tooling;
-vendored code, native artifacts and original notices are excluded.
+or `mise run format` to format owned source. Formatting excludes retained build
+helpers, native artifacts and original notices. The check targets run compiler
+and native acceptance separately.
 
 ## License
 
