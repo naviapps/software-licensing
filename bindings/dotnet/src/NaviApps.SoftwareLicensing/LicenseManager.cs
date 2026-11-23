@@ -136,6 +136,8 @@ public sealed class LicenseManager : IDisposable
 
     public async Task<LicenseState> ActivateAsync(LicenseActivationRequest request, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        Native.RequireWellFormedText(request.LicenseKey);
         await RecoverAsync(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         var start = Send(new("activate", LicenseKey: request.LicenseKey));

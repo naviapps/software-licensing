@@ -84,6 +84,7 @@ internal static class Native
     internal static SessionReply Call(SessionHandle handle, SessionCommand command)
     {
         CheckAbi();
+        if (!IsWellFormedActivation(command.Activation)) throw new LicenseException(LicenseErrorCode.InvalidData);
         return Send(handle, JsonSerializer.SerializeToUtf8Bytes(command, LicensingJson.Type<SessionCommand>()));
     }
 
@@ -103,9 +104,12 @@ internal static class Native
         CheckAbi();
         var completion = new EffectCompletion("provider", result);
         var input = new SessionCommand("completeEffect", now, Id: id, Completion: completion);
-        byte[]? data;
-        try { data = JsonSerializer.SerializeToUtf8Bytes(input, LicensingJson.Type<SessionCommand>()); }
-        catch (JsonException) { data = null; }
+        byte[]? data = null;
+        if (IsWellFormedActivation(result.Activation) && IsWellFormedText(result.Validation?.PlanIdentifier))
+        {
+            try { data = JsonSerializer.SerializeToUtf8Bytes(input, LicensingJson.Type<SessionCommand>()); }
+            catch (JsonException) { }
+        }
         if (data is null || data.Length > MaximumJsonBytes)
         {
             // Rust still needs to acknowledge the effect and release its lease.
@@ -142,15 +146,25 @@ internal static class Native
 
     internal static void RequireWellFormedText(string? value)
     {
-        if (value is null) return;
+        if (!IsWellFormedText(value)) throw new LicenseException(LicenseErrorCode.InvalidData);
+    }
+
+    private static bool IsWellFormedActivation(LicenseActivation? value) => value is null ||
+        (IsWellFormedText(value.Source) && IsWellFormedText(value.PlanIdentifier) &&
+         IsWellFormedText(value.LicenseKey) && IsWellFormedText(value.ActivationIdentifier));
+
+    private static bool IsWellFormedText(string? value)
+    {
+        if (value is null) return true;
         // The JSON encoder would replace an unpaired UTF-16 surrogate before Rust sees it.
-        try { _ = StrictUtf8.GetByteCount(value); }
-        catch (EncoderFallbackException) { throw new LicenseException(LicenseErrorCode.InvalidData); }
+        try { _ = StrictUtf8.GetByteCount(value); return true; }
+        catch (EncoderFallbackException) { return false; }
     }
 
     internal static AccessDecision MapAccess(AccessRequest command)
     {
         CheckAbi();
+        if (!IsWellFormedActivation(command.Activation)) throw new LicenseException(LicenseErrorCode.InvalidData);
         var data = JsonSerializer.SerializeToUtf8Bytes(command, LicensingJson.Type<AccessRequest>());
         try
         {

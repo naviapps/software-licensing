@@ -114,6 +114,99 @@ if (args.Contains("--managed-only"))
 }
 var clock = () => DateTimeOffset.FromUnixTimeSeconds(2000);
 {
+    const string literalReplacement = "test-\ufffd";
+    var journal = new MemoryStorage();
+    var provider = new ReleaseProvider
+    {
+        ActivationResponse = () => new LicenseActivation("test", "paid", clock(), literalReplacement, "instance"),
+    };
+    using var manager = new LicenseManager(provider, journal, clock: clock);
+    var initialState = manager.State;
+    var initialLoads = journal.LoadCount;
+    foreach (var key in new[] { "test-\ud800", "test-\udc00" })
+    {
+        await ExpectFailure(manager.ActivateAsync(new(key)), new LicenseFailure(LicenseErrorCode.InvalidData));
+        Check(manager.State == initialState && journal.LoadCount == initialLoads && journal.SaveCount == 0);
+        Check(provider.ActivationCount == 0);
+    }
+
+    var active = await manager.ActivateAsync(new(literalReplacement));
+    Check(active.Plan.IsLicensed && provider.ActivationCount == 1 && journal.SaveCount == 2);
+    Check(provider.LastActivationRequest?.LicenseKey == literalReplacement);
+}
+{
+    const string malformed = "fixture-\ud800";
+    const string literalReplacement = "fixture-\ufffd";
+    var valid = new LicenseActivation("test", "paid", clock(), "TEST-KEY", literalReplacement);
+    foreach (var reply in new[]
+    {
+        valid with { ActivationIdentifier = malformed },
+        valid with { Source = malformed },
+        valid with { PlanIdentifier = malformed },
+        valid with { LicenseKey = malformed },
+    })
+    {
+        var journal = new MemoryStorage();
+        var provider = new ReleaseProvider { ActivationResponse = () => reply };
+        using (var manager = new LicenseManager(provider, journal, clock: clock))
+        {
+            await ExpectFailure(manager.ActivateAsync(new("TEST-KEY")), new(LicenseErrorCode.InvalidData));
+            Check(!manager.State.IsActivating && !manager.State.HasPendingPersistence &&
+                manager.State.HasPendingActivation && !manager.State.Plan.IsLicensed);
+            Check(provider.ActivationCount == 1 && journal.SaveCount == 1);
+        }
+        using var reopened = new LicenseManager(provider, journal, clock: clock);
+        Check(reopened.InitialRestoreError is null && reopened.State.HasPendingActivation && !reopened.State.HasActivation);
+    }
+
+    var verifiedStorage = new MemoryStorage();
+    var unusedProvider = new ReleaseProvider();
+    using (var manager = new LicenseManager(unusedProvider, verifiedStorage, clock: clock))
+    {
+        var initialState = manager.State;
+        ExpectCode(() => manager.AdoptExternallyVerifiedActivation(valid with { ActivationIdentifier = malformed }),
+            LicenseErrorCode.InvalidData);
+        Check(manager.State == initialState && verifiedStorage.SaveCount == 0);
+        Check(manager.AdoptExternallyVerifiedActivation(valid).Plan.IsLicensed && unusedProvider.ActivationCount == 0);
+        using var saved = JsonDocument.Parse(verifiedStorage.Data!);
+        Check(saved.RootElement.GetProperty("activation").GetProperty("activationIdentifier").GetString() == literalReplacement);
+    }
+
+    var unreadable = new MemoryStorage { Data = "unreadable"u8.ToArray() };
+    using var blocked = new LicenseManager(unusedProvider, unreadable, clock: clock);
+    ExpectCode(() => blocked.AdoptExternallyVerifiedActivation(valid with { ActivationIdentifier = malformed }),
+        LicenseErrorCode.StorageFailure);
+    Check(unreadable.SaveCount == 0 && unreadable.Data.AsSpan().SequenceEqual("unreadable"u8));
+}
+{
+    var journal = new MemoryStorage();
+    var provider = new ReleaseProvider { ValidationResult = new(true, "plan-\udc00") };
+    using var manager = new LicenseManager(provider, journal, clock: clock);
+    var active = await manager.ActivateAsync(new("TEST-KEY"));
+    var persisted = journal.Data;
+    await ExpectFailure(manager.RefreshAsync(), new(LicenseErrorCode.InvalidData));
+    Check(manager.State == active && provider.ValidationCount == 1 && journal.SaveCount == 2 &&
+        ReferenceEquals(journal.Data, persisted));
+
+    const string literalReplacement = "plan-\ufffd";
+    provider.ValidationResult = new(true, literalReplacement);
+    Check((await manager.RefreshAsync()).State.Plan.Identifier == literalReplacement && journal.SaveCount == 3);
+}
+{
+    const string literalReplacement = "fixture-\ufffd";
+    var accessChecks = 0;
+    var provider = new CallbackLicenseProvider(new(literalReplacement, "paid"), _ =>
+    {
+        accessChecks++;
+        return Task.FromResult(true);
+    }, clock);
+    var activation = new LicenseActivation(literalReplacement, "paid", clock());
+    await ExpectFailure(provider.ValidateAsync(activation with { Source = "fixture-\ud800" }),
+        new(LicenseErrorCode.InvalidData, MutationOutcome: LicenseMutationOutcome.NotApplied));
+    Check(accessChecks == 0);
+    Check((await provider.ValidateAsync(activation)).IsValid && accessChecks == 1);
+}
+{
     var journal = new MemoryStorage { FailOnSave = 1 };
     var activation = new LicenseActivation("test", "café", clock());
     using (var manager = new LicenseManager(new Provider(false), journal, clock: clock))
@@ -1346,6 +1439,7 @@ sealed class MemoryStorage : ILicenseStorage
 sealed class ReleaseProvider : ILicenseProvider
 {
     public int ActivationCount;
+    public LicenseActivationRequest? LastActivationRequest;
     public int ValidationCount;
     public int ReleaseCount;
     public Action? BeforeActivate;
@@ -1361,6 +1455,7 @@ sealed class ReleaseProvider : ILicenseProvider
     public Task<LicenseActivation> ActivateAsync(LicenseActivationRequest request, CancellationToken token = default)
     {
         ActivationCount++;
+        LastActivationRequest = request;
         BeforeActivate?.Invoke();
         if (ActivationFailure is { } error) return Task.FromException<LicenseActivation>(error);
         if (PendingActivation is { } pending) return pending.Task;
