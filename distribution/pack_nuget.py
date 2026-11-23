@@ -4,8 +4,8 @@
 import argparse
 from pathlib import Path
 
-from sdk_tooling.adapters import load
 from sdk_tooling.native_plan import ffi_product
+from sdk_tooling.nuget import pack_native, retained_notice_files
 from sdk_tooling.windows_delivery import RID
 from sdk_tooling.xcframework import xcframework
 
@@ -21,19 +21,14 @@ def main(argv=None):
     parser.add_argument("--result", type=Path, help="Write the verified package filename")
     args = parser.parse_args(argv)
     native = ffi_product(ROOT) if set(args.runtime) == {RID} else xcframework(ROOT)
-    notices = ROOT / "ThirdParty"
-    files = {"LICENSE": ROOT / "LICENSE", "README.md": ROOT / "README.md"}
-    files.update(
-        {
-            "licenses/" + path.relative_to(notices).as_posix(): path
-            for path in load("artifacts").files(notices)
-            if path.name not in (".DS_Store", "registry-notices.json")
-        }
-    )
-    package = load("nuget").pack_native(
+    package = pack_native(
         native,
         project=ROOT / "bindings/dotnet/src" / PACKAGE / (PACKAGE + ".csproj"),
-        package_files=files,
+        package_files={
+            "LICENSE": ROOT / "LICENSE",
+            "README.md": ROOT / "README.md",
+            **retained_notice_files(ROOT / "ThirdParty", "licenses"),
+        },
         nuget_config=ROOT / "bindings/dotnet/NuGet.Config",
         input_files=[Path(__file__), ROOT / "native.toml", ROOT / "mise.toml"],
         runtimes=args.runtime,

@@ -1,5 +1,7 @@
 """Run the public fixture against an audited licensing package."""
 
+from sdk_tooling.nuget import retained_notice_files
+
 PACKAGE = "NaviApps.SoftwareLicensing"
 
 
@@ -17,11 +19,7 @@ def check_package(
     exclude_paths,
     native_aot=False,
 ):
-    notices = {
-        "licenses/" + path.relative_to(root / "ThirdParty").as_posix(): path
-        for path in (root / "ThirdParty").rglob("*")
-        if path.is_file() and path.name not in (".DS_Store", "registry-notices.json")
-    }
+    notices = retained_notice_files(root / "ThirdParty", "licenses")
     digest = nuget.audit_package(
         package,
         expected_files={"LICENSE": root / "LICENSE", "README.md": root / "README.md", **notices},
