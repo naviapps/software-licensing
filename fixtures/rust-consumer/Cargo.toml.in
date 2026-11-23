@@ -1,0 +1,11 @@
+[package]
+name = "software-licensing-git-consumer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# The producer supplies the exact SDK revision to this independent workspace.
+[workspace]
+
+[dependencies]
+software-licensing = { git = "https://github.com/naviapps/software-licensing.git", rev = "@SDK_REVISION@" }
