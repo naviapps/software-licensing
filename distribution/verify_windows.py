@@ -14,9 +14,9 @@ from pathlib import Path
 from sdk_tooling.adapters import load, support_inputs
 from sdk_tooling.native_plan import builder
 
-from fixtures.distribution.dotnet_consumer import PACKAGE, check_package
+from distribution.nuget import PACKAGE, check_package
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 TARGET = "x86_64-pc-windows-msvc"
 RID = "win-x64"
 RECEIPT = "software-licensing-windows.json"
@@ -51,7 +51,7 @@ def main(argv=None):
     source = acceptance_source()
     tool_inputs = support_inputs(ROOT)
     windows = load("windows")
-    bindings = load("bindings")
+    managed = load("dotnet")
     artifacts = load("artifacts")
     environment = {
         key.upper(): value for key, value in os.environ.items() if key.upper() != "DOTNET_HOST_PATH"
@@ -100,7 +100,7 @@ def main(argv=None):
                 raise ValueError("Windows x64 library differs from the selected host build")
             receipt_digest = sha256(built / "native-build.json")
             dll, import_library = [
-                bindings.stage_native(built / name, candidate / name) for name in names
+                artifacts.stage_native(built / name, candidate / name) for name in names
             ]
             expected = {name: native_receipt["outputs"][name] for name in names}
 
@@ -119,7 +119,7 @@ def main(argv=None):
         )
         executable = candidate / "abi.exe"
         # Windows prefers the executable directory for imported libraries.
-        bindings.compile_c(
+        load("c_compiler").compile_c(
             ROOT / "crates/ffi/tests/c/abi.c",
             output=executable,
             compiler=[tools / "cl.exe"],
@@ -133,7 +133,7 @@ def main(argv=None):
         run(executable)
         env["SOFTWARE_LICENSING_NATIVE_LIBRARY"] = str(dll)
         config = ROOT / "bindings/dotnet/NuGet.Config"
-        bindings.run_managed(
+        managed.run_managed(
             dotnet,
             ROOT / "bindings/dotnet/tests/SoftwareLicensing.Tests/SoftwareLicensing.Tests.csproj",
             cwd=ROOT,
@@ -146,9 +146,9 @@ def main(argv=None):
 
         verify_staged()
         assets = candidate / "runtimes"
-        packed_dll = bindings.stage_native(dll, assets / RID / "native" / dll.name)
+        packed_dll = artifacts.stage_native(dll, assets / RID / "native" / dll.name)
         packages = candidate / "packages"
-        bindings.pack_project(
+        managed.pack_project(
             dotnet,
             ROOT / f"bindings/dotnet/src/{PACKAGE}/{PACKAGE}.csproj",
             output=packages,
@@ -159,7 +159,7 @@ def main(argv=None):
         )
         package = packages / f"{PACKAGE}.{native.version}.nupkg"
         package_hash = check_package(
-            bindings,
+            load("nuget"),
             dotnet,
             root=ROOT,
             package=package,

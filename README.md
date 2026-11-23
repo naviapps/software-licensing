@@ -14,14 +14,16 @@ Maintainers use [build and acceptance](#build-and-acceptance) and
 
 ## Layout
 
-| Path                                                  | Contents                                                    |
-| ----------------------------------------------------- | ----------------------------------------------------------- |
-| `crates/`                                             | Rust implementation and C API in `crates/ffi/include/`      |
-| `crates/ffi/tests/c/`                                 | C ABI tests                                                 |
-| `Sources/`, `Tests/`                                  | Swift bindings and tests                                    |
-| `bindings/dotnet/src/<project>/`                      | Named .NET source projects                                  |
-| `bindings/dotnet/tests/SoftwareLicensing.Tests/`      | .NET test project and fixtures                              |
-| `Artifacts/`, `ThirdParty/`, `fixtures/distribution/` | Native packages, upstream notices and distribution fixtures |
+| Path                                             | Contents                                               |
+| ------------------------------------------------ | ------------------------------------------------------ |
+| `crates/`                                        | Rust implementation and C API in `crates/ffi/include/` |
+| `crates/ffi/tests/c/`                            | C ABI tests                                            |
+| `Sources/`, `Tests/`                             | Swift bindings and tests                               |
+| `bindings/dotnet/src/<project>/`                 | Named .NET source projects                             |
+| `bindings/dotnet/tests/SoftwareLicensing.Tests/` | .NET test project and fixtures                         |
+| `fixtures/consumers/`                            | Independent SDK clients                                |
+| `distribution/`                                  | SDK-specific package checks                            |
+| `Artifacts/`, `ThirdParty/`                      | Native packages and upstream notices                   |
 
 ## Products
 
@@ -87,7 +89,7 @@ by the SDK's external consumer check.
 SwiftPM uses the checked-in native framework; ordinary Swift consumers do not
 run the SDK's Rust, .NET or Python development tools.
 
-[swift-consumer]: https://github.com/naviapps/software-licensing/blob/main/fixtures/swift-consumer/Sources/CoreLifecycleConsumer/Consumer.swift
+[swift-consumer]: https://github.com/naviapps/software-licensing/blob/main/fixtures/consumers/swift/Sources/CoreLifecycleConsumer/Consumer.swift
 
 In an app, supply its own source, plan, Keychain service and account, and a
 read-only access check:
@@ -375,13 +377,13 @@ xcrun clang -std=c17 main.c -F "$sdk_install" -framework CSoftwareLicensing \
 ```
 
 This is the same framework and header used by the independent fixture under
-`fixtures/c-consumer/`. Preserve the original notices when redistributing the
+`fixtures/consumers/c/`. Preserve the original notices when redistributing the
 binary. The C client needs no Cargo workspace or SDK development tooling.
 
 ## Build and acceptance
 
 `make check` includes the shared Swift consumer command. It stages only installable
-SDK inputs and builds and runs the independent `fixtures/swift-consumer` package
+SDK inputs and builds and runs the independent `fixtures/consumers/swift` package
 with strict concurrency and warnings as errors. The fixture uses the public core
 and Keychain products, an injected fixed clock, callbacks and in-memory storage to
 check activation, reopen, refresh, deactivation and rejected activation. It only constructs

@@ -10,11 +10,11 @@ from pathlib import Path
 from sdk_tooling.adapters import load
 from sdk_tooling.native_plan import builder
 
-from fixtures.distribution.dotnet_consumer import PACKAGE, check_package
+from distribution.nuget import PACKAGE, check_package
 
 
 def main():
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]
     env = dict(
         os.environ,
         DOTNET_CLI_TELEMETRY_OPTOUT="1",
@@ -25,8 +25,8 @@ def main():
     dotnet = env.get("DOTNET_BIN") or shutil.which("dotnet", path=env.get("PATH"))
     if not dotnet:
         raise SystemExit("Install .NET 10 or provide DOTNET_BIN")
-    bindings = load("bindings")
-    bindings.run_managed(
+    managed = load("dotnet")
+    managed.run_managed(
         dotnet,
         root / "bindings/dotnet/tests/SoftwareLicensing.Tests/SoftwareLicensing.Tests.csproj",
         cwd=root,
@@ -45,10 +45,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="dotnet-package-", dir=output) as directory:
         work = Path(directory)
         assets = work / "runtimes"
-        library = bindings.stage_native(
+        library = load("artifacts").stage_native(
             framework, assets / rid / "native" / "libsoftware_licensing.dylib"
         )
-        bindings.pack_project(
+        managed.pack_project(
             dotnet,
             root / f"bindings/dotnet/src/{PACKAGE}/{PACKAGE}.csproj",
             env=env,
@@ -58,7 +58,7 @@ def main():
             nuget_config=root / "bindings/dotnet/NuGet.Config",
         )
         check_package(
-            bindings,
+            load("nuget"),
             dotnet,
             root=root,
             package=work / f"{PACKAGE}.{native.version}.nupkg",

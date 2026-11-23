@@ -16,9 +16,9 @@ from sdk_tooling.adapters import load
 
 
 def load_driver():
-    fixtures = Path(__file__).resolve().parents[1]
+    distribution = Path(__file__).resolve().parents[1]
     spec = importlib.util.spec_from_file_location(
-        "software_licensing_windows", fixtures / "windows.py"
+        "software_licensing_windows", distribution / "verify_windows.py"
     )
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
@@ -98,7 +98,7 @@ class WindowsOutputTests(unittest.TestCase):
         self, root, *, host="arm64", stale=False, retain=False, mutate=False, change_tools=False
     ):
         driver = load_driver()
-        fixture = root / "fixtures/dotnet-consumer/Program.cs"
+        fixture = root / "fixtures/consumers/dotnet/Program.cs"
         fixture.parent.mkdir(parents=True)
         fixture.write_text('System.Console.WriteLine("synthetic");')
         (root / "mise.toml").write_text('[tools]\ndotnet = "10.0.403"\n')
@@ -145,21 +145,24 @@ class WindowsOutputTests(unittest.TestCase):
             "vm_environment": load("vm_environment"),
             "windows_delivery": load("windows_delivery"),
             "windows": Mock(),
-            "bindings": Mock(),
+            "c_compiler": Mock(),
+            "dotnet": Mock(),
+            "nuget": Mock(),
             "native": Mock(),
             "artifacts": artifacts(),
         }
         windows = local_modules["windows"]
         windows.host_architecture.return_value = host
         windows.MSVC_TARGETS = msvc_targets
-        bindings = local_modules["bindings"]
+        managed = local_modules["dotnet"]
+        nuget = local_modules["nuget"]
         native = local_modules["native"].NativeBuilder.return_value
         native.version = "0.1.0"
         windows.native_environment.return_value = (env, root / "MSVC", dotnet)
         windows.build_library.return_value = built
         windows.verify_artifact.return_value = (built, receipt)
         windows.verify_library.return_value = {"software_licensing_abi_version"}
-        bindings.stage_native.side_effect = stage
+        local_modules["artifacts"].stage_native = stage
 
         package_name = "NaviApps.SoftwareLicensing.0.1.0.nupkg"
         package_bytes = b"accepted NuGet package"
@@ -182,8 +185,8 @@ class WindowsOutputTests(unittest.TestCase):
                 dll.write_bytes(b"changed after native fixture")
             return package_hash
 
-        bindings.pack_project.side_effect = pack
-        bindings.audit_package.side_effect = audit
+        managed.pack_project.side_effect = pack
+        nuget.audit_package.side_effect = audit
 
         def check_output(command, **_):
             self.assertEqual(command, [str(dotnet), "--version"])
@@ -247,18 +250,20 @@ class WindowsOutputTests(unittest.TestCase):
         self.assertFalse(
             any(call.args[0][:2] == ["cargo", "build"] for call in commands.call_args_list)
         )
-        c = bindings.compile_c.call_args.kwargs
+        c = local_modules["c_compiler"].compile_c.call_args.kwargs
         candidate = c["output"].parent
         accepted_dll = candidate / library.name
         self.assertEqual(c["libraries"], [candidate / import_library.name])
         self.assertEqual(c["compiler"], [root / "MSVC/cl.exe"])
         windows.require_pe_machine.assert_called_once_with(c["output"], "x64")
         self.assertEqual(windows.verify_library.call_args.args[0], accepted_dll)
-        managed = bindings.run_managed.call_args.kwargs
-        self.assertEqual(managed["runtime"], "win-x64")
-        self.assertEqual(managed["properties"], {"UseAppHost": "false"})
-        self.assertEqual(managed["env"]["SOFTWARE_LICENSING_NATIVE_LIBRARY"], str(accepted_dll))
-        fixture_call = bindings.run_isolated_consumer.call_args.kwargs
+        managed_call = managed.run_managed.call_args.kwargs
+        self.assertEqual(managed_call["runtime"], "win-x64")
+        self.assertEqual(managed_call["properties"], {"UseAppHost": "false"})
+        self.assertEqual(
+            managed_call["env"]["SOFTWARE_LICENSING_NATIVE_LIBRARY"], str(accepted_dll)
+        )
+        fixture_call = nuget.run_isolated_consumer.call_args.kwargs
         self.assertEqual(fixture_call["runtime"], "win-x64")
         self.assertEqual(fixture_call["source"], fixture.read_text())
         self.assertIn(built, fixture_call["exclude_paths"])

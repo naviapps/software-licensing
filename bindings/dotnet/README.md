@@ -20,7 +20,7 @@ $env:NUGET_PACKAGES = Join-Path (Get-Location) ".nuget-packages"
 & "$env:DOTNET_BIN" add package NaviApps.SoftwareLicensing --version 0.1.0 --source C:\owned\packages
 ```
 
-Copy the [standalone .NET example](../../fixtures/dotnet-consumer/Program.cs) to
+Copy the [standalone .NET example](../../fixtures/consumers/dotnet/Program.cs) to
 `Program.cs`, then run `& "$env:DOTNET_BIN" run --runtime win-x64 -p:UseAppHost=false`.
 The same example runs against the isolated NuGet package in distribution checks.
 It uses synthetic access and in-memory storage to activate, reopen, refresh and deactivate.
@@ -62,7 +62,7 @@ native ARM64 Python and the pinned ARM64 Rust toolchain with the
 path of the pinned x64 .NET SDK. Install the SDK's pinned uv and Python with mise.
 
 ```powershell
-mise run sdk-tooling -- python fixtures/distribution/windows.py --architecture x64
+mise run sdk-tooling -- python distribution/verify_windows.py --architecture x64
 ```
 
 This verifies a single DLL across C, .NET recovery and DPAPI fixtures, and the
