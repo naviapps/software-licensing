@@ -401,8 +401,8 @@ mirror of the exact SDK commit and accepts Git packages only from that revision.
 The C client builds against only the copied framework, its public header and
 notices. Both exercises use synthetic entitlement and a fixed clock to verify
 that access waits for persistence, rejects a duplicate acknowledgement and
-expires without provider or storage calls. The existing macOS job runs this
-gate separately from `make check`. This does not exercise Git authentication,
+expires without provider or storage calls. The macOS distribution job runs this
+gate alongside `make check-distribution`. This does not exercise Git authentication,
 production licensing or Windows DPAPI.
 
 From the SDK root, review `mise.toml` and select its pinned developer tools.
@@ -444,11 +444,11 @@ Developer commands use the immutable `sdk-tooling` revision in
 for verified caches, offline use and source overrides. Ordinary SwiftPM and NuGet
 consumers do not need that setup.
 
-GitHub Actions runs Rust, C and .NET fixtures on macOS and Windows x64. The
-macOS workflow runs strict Swift tests with Xcode 26.6 and Xcode 27, and
-verifies the tracked framework receipt with Xcode 27. The Windows workflow
-verifies the installed x64 NuGet package. These checks use synthetic fixture
-providers.
+GitHub Actions runs the same strict Swift tests and standalone Swift consumer
+on macOS 26 with Xcode 26.6 and macOS 27 with Xcode 27. A single macOS 27
+distribution job checks the tracked framework receipt and runs Rust, C and .NET
+fixtures. The Windows x64 workflow verifies the installed NuGet package. These
+checks use synthetic fixture providers.
 
 ## Static checks
 

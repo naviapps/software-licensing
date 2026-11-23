@@ -4,9 +4,11 @@ FRAMEWORK_DIR := $(CURDIR)/Artifacts/CSoftwareLicensing.xcframework/macos-arm64_
 NATIVE_LIBRARY := $(FRAMEWORK_DIR)/CSoftwareLicensing.framework/CSoftwareLicensing
 
 .DEFAULT_GOAL := check
-.PHONY: check native native-verify lint test test-rust test-tools test-dotnet test-c test-consumer test-installed-consumers format
+.PHONY: check check-distribution native native-verify lint test test-rust test-tools test-dotnet test-c test-consumer test-installed-consumers format
 
-check: lint test-tools native-verify test-rust test test-consumer test-dotnet test-c
+check: check-distribution test test-consumer
+
+check-distribution: lint test-tools native-verify test-rust test-dotnet test-c
 
 native:
 	python3 tools/native.py
