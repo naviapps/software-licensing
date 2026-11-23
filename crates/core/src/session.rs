@@ -259,26 +259,8 @@ impl Session {
                     }
                     // Re-entering the saved key validates the existing instance;
                     // it never consumes another remote activation slot.
-                    let id = self.next_id()?;
-                    self.active = Some(Active {
-                        id,
-                        operation: Operation::Validate,
-                    });
-                    effect = Some(Effect::Provider {
-                        id,
-                        operation: Operation::Validate,
-                        license_key: None,
-                        activation: self.record.activation.clone(),
-                    });
-                    return Ok(Reply {
-                        state: self.snapshot(now),
-                        effect,
-                        outcome,
-                        error,
-                        needs_refresh: self.needs_refresh(now),
-                    });
-                }
-                if self
+                    effect = Some(self.start_validation()?);
+                } else if self
                     .record
                     .activation
                     .as_ref()
@@ -286,21 +268,21 @@ impl Session {
                 {
                     // A keyless remote instance still needs release before replacement.
                     return Err(Failure::new(ErrorCode::ActivationAlreadyPresent));
+                } else {
+                    let provider = Effect::Provider {
+                        id: self.next_id()?,
+                        operation: Operation::Activate,
+                        license_key: key.as_ref().map(|k| k.to_string()),
+                        activation: None,
+                    };
+                    let mut record = self.record.clone();
+                    record.pending_activation = Some(PendingActivation {
+                        license_key: key.as_ref().map(|k| k.to_string()),
+                        started_at: now,
+                    });
+                    record.last_operation_failure = None;
+                    effect = Some(self.stage(record, Some(provider), None, false, None)?);
                 }
-                let id = self.next_id()?;
-                let provider = Effect::Provider {
-                    id,
-                    operation: Operation::Activate,
-                    license_key: key.as_ref().map(|k| k.to_string()),
-                    activation: None,
-                };
-                let mut record = self.record.clone();
-                record.pending_activation = Some(PendingActivation {
-                    license_key: key.as_ref().map(|k| k.to_string()),
-                    started_at: now,
-                });
-                record.last_operation_failure = None;
-                effect = Some(self.stage(record, Some(provider), None, false, None)?);
             }
             Command::AdoptExternallyVerifiedActivation { activation, .. } => {
                 self.require_idle()?;
@@ -343,16 +325,7 @@ impl Session {
                 if !self.record.pending_deactivation {
                     return Err(Failure::new(ErrorCode::InvalidData));
                 }
-                effect = Some(self.stage(
-                    Record {
-                        status: Status::Deactivated,
-                        ..Record::default()
-                    },
-                    None,
-                    Some(LicenseRefreshOutcome::Deactivated),
-                    false,
-                    None,
-                )?);
+                effect = Some(self.stage_deactivation()?);
             }
             Command::Refresh { only_if_due, .. } => {
                 if self.record.pending_activation.is_some() && self.active.is_none() {
@@ -380,17 +353,7 @@ impl Session {
                     } else if only_if_due && !self.needs_refresh(now) {
                         outcome = Some(LicenseRefreshOutcome::SkippedNotDue);
                     } else {
-                        let id = self.next_id()?;
-                        self.active = Some(Active {
-                            id,
-                            operation: Operation::Validate,
-                        });
-                        effect = Some(Effect::Provider {
-                            id,
-                            operation: Operation::Validate,
-                            license_key: None,
-                            activation: self.record.activation.clone(),
-                        });
+                        effect = Some(self.start_validation()?);
                     }
                 }
             }
@@ -435,11 +398,8 @@ impl Session {
                 let operation = self.active.as_ref().unwrap().operation;
                 match (operation, result) {
                     (Operation::Activate, ProviderReply::Activated { activation }) => {
-                        let mut activation = match activation.normalized() {
-                            Ok(a) => a,
-                            Err(_) => {
-                                return self.provider_error_reply(operation, now);
-                            }
+                        let Ok(mut activation) = activation.normalized() else {
+                            return self.provider_error_reply(id, now);
                         };
                         if let Some(requested_key) = self
                             .record
@@ -452,7 +412,7 @@ impl Session {
                                 .is_some_and(|key| key != requested_key)
                         {
                             // An unrelated identity cannot resolve the journaled request.
-                            return self.provider_error_reply(operation, now);
+                            return self.provider_error_reply(id, now);
                         }
                         if activation.license_key.is_none() {
                             activation.license_key = self
@@ -471,11 +431,8 @@ impl Session {
                         effect = Some(self.stage(record, None, None, true, None)?);
                     }
                     (Operation::Validate, ProviderReply::Validated { validation }) => {
-                        let validation = match validation.validated() {
-                            Ok(v) => v,
-                            Err(_) => {
-                                return self.provider_error_reply(operation, now);
-                            }
+                        let Ok(validation) = validation.validated() else {
+                            return self.provider_error_reply(id, now);
                         };
                         let mut record = self.record.clone();
                         let activation = record
@@ -495,7 +452,7 @@ impl Session {
                                 .expires_at
                                 .is_some_and(|t| t <= activation.activated_at)
                             {
-                                return self.provider_error_reply(operation, now);
+                                return self.provider_error_reply(id, now);
                             }
                             activation.expires_at = validation.expires_at;
                             // Expired credentials remain available for renewal validation and deactivation.
@@ -517,17 +474,7 @@ impl Session {
                         )?);
                     }
                     (Operation::Deactivate, ProviderReply::Deactivated) => {
-                        let record = Record {
-                            status: Status::Deactivated,
-                            ..Record::default()
-                        };
-                        effect = Some(self.stage(
-                            record,
-                            None,
-                            Some(LicenseRefreshOutcome::Deactivated),
-                            false,
-                            None,
-                        )?);
+                        effect = Some(self.stage_deactivation()?);
                     }
                     (_, ProviderReply::Failed { failure }) => {
                         if operation != Operation::Validate {
@@ -562,7 +509,7 @@ impl Session {
                             effect = Some(self.stage(record, None, Some(result), false, None)?);
                         }
                     }
-                    _ => return self.provider_error_reply(operation, now),
+                    _ => return self.provider_error_reply(id, now),
                 }
             }
             Command::Persisted { id, success, .. } => {
@@ -646,30 +593,24 @@ impl Session {
             Ok(())
         }
     }
-    fn provider_error_reply(&mut self, operation: Operation, now: f64) -> Result<Reply, Failure> {
-        let failure = Failure::new(ErrorCode::UnexpectedProviderResponse);
-        let (effect, outcome, error) = if operation == Operation::Validate {
-            let record = self.validation_failure(failure, now);
-            let result = Self::refresh_outcome(record.effective_status(now));
-            (
-                Some(self.stage(record, None, Some(result), false, None)?),
-                None,
-                None,
-            )
-        } else {
-            let id = self.active.as_ref().unwrap().id;
-            return self.dispatch(Command::Provider {
-                id,
-                result: ProviderReply::Failed { failure },
-                now,
-            });
-        };
-        Ok(Reply {
-            state: self.snapshot(now),
-            effect,
-            outcome,
-            error,
-            needs_refresh: self.needs_refresh(now),
+    fn provider_error_reply(&mut self, id: u64, now: f64) -> Result<Reply, Failure> {
+        self.dispatch(Command::Provider {
+            id,
+            result: ProviderReply::Failed {
+                failure: Failure::new(ErrorCode::UnexpectedProviderResponse),
+            },
+            now,
+        })
+    }
+    fn start_validation(&mut self) -> Result<Effect, Failure> {
+        let id = self.next_id()?;
+        let operation = Operation::Validate;
+        self.active = Some(Active { id, operation });
+        Ok(Effect::Provider {
+            id,
+            operation,
+            license_key: None,
+            activation: self.record.activation.clone(),
         })
     }
     fn next_id(&mut self) -> Result<u64, Failure> {
@@ -722,6 +663,18 @@ impl Session {
             ..Record::default()
         }
     }
+    fn stage_deactivation(&mut self) -> Result<Effect, Failure> {
+        self.stage(
+            Record {
+                status: Status::Deactivated,
+                ..Record::default()
+            },
+            None,
+            Some(LicenseRefreshOutcome::Deactivated),
+            false,
+            None,
+        )
+    }
     fn refresh_outcome(status: Status) -> LicenseRefreshOutcome {
         match status {
             Status::Active => LicenseRefreshOutcome::Validated,
@@ -739,18 +692,6 @@ impl Session {
             _ => Status::Invalid,
         };
         record.last_refresh_failure = Some(failure.clone());
-        let retry_interval = match failure.code {
-            ErrorCode::TransportFailure
-            | ErrorCode::RequestFailure
-            | ErrorCode::UnexpectedProviderResponse
-            | ErrorCode::ServerFailure
-            | ErrorCode::RateLimited => self.policy.failure_retry_interval,
-            _ => self.policy.validation_interval,
-        };
-        record.next_refresh_at = Some(self.deadline(
-            now,
-            retry_interval.max(failure.retry_after_seconds.unwrap_or(0) as f64),
-        ));
         let grace = match failure.code {
             ErrorCode::TransportFailure
             | ErrorCode::RequestFailure
@@ -760,6 +701,15 @@ impl Session {
             }
             _ => None,
         };
+        let retry_interval = if grace.is_some() {
+            self.policy.failure_retry_interval
+        } else {
+            self.policy.validation_interval
+        };
+        record.next_refresh_at = Some(self.deadline(
+            now,
+            retry_interval.max(failure.retry_after_seconds.unwrap_or(0) as f64),
+        ));
         if let Some(grace) = grace.filter(|g| *g > 0.0 && was_licensed)
             && let Some(last) = record.last_validated_at.filter(|t| *t <= now + 1.0)
         {

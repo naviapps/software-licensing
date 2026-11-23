@@ -485,6 +485,63 @@ await using (var states = observed.WatchStatesAsync().GetAsyncEnumerator())
     observed.Dispose();
     Check(!await states.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
 }
+{
+    var time = clock();
+    int reads = 0;
+    bool clockThrows = false;
+    DateTimeOffset ReadClock()
+    {
+        reads++;
+        if (clockThrows) throw new InvalidOperationException("Fixture clock unavailable.");
+        return time;
+    }
+
+    var clockStorage = new MemoryStorage();
+    var clockProvider = new ReleaseProvider();
+    using var manager = new LicenseManager(clockProvider, clockStorage, clock: ReadClock);
+    await manager.ActivateAsync(new("TEST-KEY"));
+    var deadline = manager.State.NextRefreshAt!.Value;
+    var beforeQueries = (reads, clockStorage.LoadCount, clockStorage.SaveCount);
+    Check(!manager.NeedsRefresh(deadline.AddMilliseconds(-250)) && manager.NeedsRefresh(deadline));
+    Check(manager.NeedsRefresh(DateTimeOffset.MaxValue));
+    Check(beforeQueries == (reads, clockStorage.LoadCount, clockStorage.SaveCount));
+    time = deadline;
+    var available = manager.State;
+    Check(available.Plan.IsLicensed);
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    await using var observer = manager.WatchStatesAsync(timeout.Token).GetAsyncEnumerator();
+    Check(await observer.MoveNextAsync() && observer.Current == available);
+    foreach (var throws in new[] { false, true })
+    {
+        time = throws ? deadline : DateTimeOffset.MaxValue;
+        clockThrows = throws;
+        var unavailable = manager.State;
+        Check(unavailable.Status == LicenseStatus.Unlicensed && manager.Plan == unavailable.Plan && manager.NeedsRefresh());
+        Check(await observer.MoveNextAsync() && observer.Current == unavailable);
+        await using var recovery = manager.WatchStatesAsync(timeout.Token).GetAsyncEnumerator();
+        Check(await recovery.MoveNextAsync() && recovery.Current == unavailable);
+        clockThrows = false;
+        time = deadline;
+        Check(manager.State == available);
+        Check(await observer.MoveNextAsync() && observer.Current == available);
+        Check(await recovery.MoveNextAsync() && recovery.Current == available);
+    }
+    Check(clockProvider.ActivationCount == 1 && clockProvider.ValidationCount == 0 && clockProvider.ReleaseCount == 0);
+    Check((clockStorage.LoadCount, clockStorage.SaveCount) == (beforeQueries.LoadCount, beforeQueries.SaveCount));
+}
+{
+    var time = clock();
+    using var manager = new LicenseManager(new ReleaseProvider(), new MemoryStorage(), clock: clock);
+    LicenseState Snapshot(string source, string plan) => manager.AdoptExternallyVerifiedActivation(new(source, plan, time));
+    const string composed = "caf\u00e9";
+    const string decomposed = "cafe\u0301";
+    var original = Snapshot(composed, composed);
+    var sourceChange = Snapshot(decomposed, composed);
+    var planChange = Snapshot(composed, decomposed);
+    Check(original.Source != sourceChange.Source && original.Plan == sourceChange.Plan);
+    Check(original.Source == planChange.Source && original.Plan != planChange.Plan);
+    Check(new HashSet<LicenseState> { original, sourceChange, planChange }.Count == 3);
+}
 if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 26100))
 {
     var directory = Path.Combine(Path.GetTempPath(), "software-licensing-fixture-" + Guid.NewGuid().ToString("N"));

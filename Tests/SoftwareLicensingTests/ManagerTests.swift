@@ -32,10 +32,16 @@ private final class MemoryStorage: @unchecked Sendable, LicenseStorage {
 }
 
 private final class ValidationClock: Sendable {
-  private let instant = Mutex<Date>(Date(timeIntervalSince1970: 2000))
-  func read() -> Date { instant.withLock { $0 } }
+  private let state = Mutex((now: Date(timeIntervalSince1970: 2000), reads: 0))
+  var reads: Int { state.withLock { $0.reads } }
+  func read() -> Date {
+    state.withLock {
+      $0.reads += 1
+      return $0.now
+    }
+  }
   func set(_ seconds: TimeInterval) {
-    instant.withLock { $0 = Date(timeIntervalSince1970: seconds) }
+    state.withLock { $0.now = Date(timeIntervalSince1970: seconds) }
   }
 }
 
@@ -57,7 +63,7 @@ private final class ValidationClock: Sendable {
   func deactivate(_: LicenseActivation) async throws {}
 }
 
-@Test(arguments: [Double.nan, .infinity, -.infinity]) @MainActor
+@Test(arguments: [Double.nan, .infinity, -.infinity, 253_402_300_800]) @MainActor
 func invalidClockReadsFailClosedWithoutChangingTheSavedActivation(_ invalidTime: Double)
   async throws
 {
@@ -68,12 +74,52 @@ func invalidClockReadsFailClosedWithoutChangingTheSavedActivation(_ invalidTime:
   try await manager.activate(.licenseKey("TEST-KEY"))
   let saved = storage.data
   let writes = storage.saveCount
+  let loads = storage.loadCount
+  let deadline = try #require(manager.state.nextRefreshAt)
+  let reads = clock.reads
+  #expect(!manager.needsRefresh(now: deadline.addingTimeInterval(-0.25)))
+  #expect(manager.needsRefresh(now: deadline))
+  #expect(manager.needsRefresh(now: Date(timeIntervalSince1970: invalidTime)))
+  #expect(clock.reads == reads)
+
+  clock.set(deadline.timeIntervalSince1970)
+  let available = manager.state
+  #expect(available.isLicensed)
+  var observer = manager.states().makeAsyncIterator()
   clock.set(invalidTime)
-  #expect(!manager.state.isLicensed && manager.needsRefresh())
+  let unavailable = manager.state
+  #expect(unavailable.status == .unlicensed && manager.plan == unavailable.plan)
+  #expect(manager.needsRefresh())
+  #expect(await observer.next() == unavailable)
+  var recovery = manager.states().makeAsyncIterator()
+  #expect(await recovery.next() == unavailable)
+  var bufferedRecovery = manager.states().makeAsyncIterator()
   await #expect(throws: LicenseError(.invalidData)) { try await manager.refresh() }
+  clock.set(deadline.timeIntervalSince1970)
+  #expect(manager.state == available)
+  #expect(await bufferedRecovery.next() == available)
   #expect(storage.data == saved && storage.saveCount == writes && provider.validations == 0)
-  clock.set(2000)
-  #expect(manager.state.isLicensed && !manager.state.hasPendingPersistence)
+  #expect(storage.loadCount == loads && !manager.state.hasPendingPersistence)
+}
+
+@Test @MainActor func snapshotsPreserveTheExactSpellingOfSourceAndPlan() throws {
+  let time = Date(timeIntervalSince1970: 2000)
+  let manager = try LicenseManager(
+    provider: ValidationProvider(), storage: MemoryStorage(), clock: { time })
+  func snapshot(_ source: String, _ plan: String) throws -> LicenseState {
+    let identity = try #require(LicenseSource(identifier: source))
+    return try manager.adoptExternallyVerifiedActivation(
+      #require(
+        LicenseActivation(source: identity, planIdentifier: plan, activatedAt: time)))
+  }
+  let composed = "caf\u{00e9}"
+  let decomposed = "cafe\u{0301}"
+  let original = try snapshot(composed, composed)
+  let sourceChange = try snapshot(decomposed, composed)
+  let planChange = try snapshot(composed, decomposed)
+  #expect(original.source != sourceChange.source && original.plan == sourceChange.plan)
+  #expect(original.source == planChange.source && original.plan != planChange.plan)
+  #expect(Set([original, sourceChange, planChange]).count == 3)
 }
 
 @Test(arguments: [false, true]) @MainActor

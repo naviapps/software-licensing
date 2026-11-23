@@ -20,26 +20,10 @@ $env:NUGET_PACKAGES = Join-Path (Get-Location) ".nuget-packages"
 & "$env:DOTNET_BIN" add package NaviApps.SoftwareLicensing --version 0.1.0 --source C:\owned\packages
 ```
 
-To verify native loading, replace `Program.cs` with the following and run
-`& "$env:DOTNET_BIN" run --runtime win-x64 -p:UseAppHost=false`.
-
-```csharp
-using NaviApps.SoftwareLicensing;
-
-Console.WriteLine(LicenseRefreshPolicy.Default.ValidationInterval);
-```
-
-With a package built from a revision containing `CallbackLicenseProvider`,
-use this program to exercise a synthetic access check.
-
-```csharp
-using NaviApps.SoftwareLicensing;
-
-var configuration = new CallbackLicenseProvider.Configuration("com.example.access", "membership");
-var provider = new CallbackLicenseProvider(configuration, _ => Task.FromResult(true));
-var activation = await provider.ActivateAsync(LicenseActivationRequest.Automatic);
-Console.WriteLine(activation.PlanIdentifier);
-```
+Copy the [standalone .NET example](../../fixtures/dotnet-consumer/Program.cs) to
+`Program.cs`, then run `& "$env:DOTNET_BIN" run --runtime win-x64 -p:UseAppHost=false`.
+The same example runs against the isolated NuGet package in distribution checks.
+It uses synthetic access and in-memory storage to activate, reopen, refresh and deactivate.
 
 For application integration, use `CallbackLicenseProvider` with a read-only
 access check or supply an `ILicenseProvider` for key-based licensing. Select an

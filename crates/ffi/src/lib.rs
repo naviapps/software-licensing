@@ -1,4 +1,8 @@
 //! Bounded C ABI for provider-neutral licensing and native access callbacks.
+
+#[cfg(test)]
+#[path = "../tests/unit/session_wire.rs"]
+mod session_wire_tests;
 use serde::Deserialize;
 use software_licensing::{Activation, Command, ErrorCode, Failure, Policy, Session, Validation};
 use std::sync::Mutex;

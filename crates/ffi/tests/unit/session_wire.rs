@@ -1,7 +1,4 @@
-// The shipped static and dynamic libraries do not provide an rlib for integration tests.
-#[path = "../src/lib.rs"]
-mod ffi;
-
+use super as ffi;
 use serde_json::{Value, json};
 use software_licensing::Session;
 use std::{ptr::NonNull, sync::Mutex};
