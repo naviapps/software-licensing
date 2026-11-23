@@ -1,21 +1,25 @@
 use proptest::prelude::*;
 use software_licensing::{
-    Activation, Command, Effect, EffectCompletion, ErrorCode, Operation, Policy, ProviderReply,
-    Record, Reply, Session,
+    Activation, Command, Effect, EffectCompletion, ErrorCode, Failure, LicenseRefreshOutcome,
+    Operation, Policy, ProviderReply, Record, Reply, Session, Validation,
 };
 
 const NOW: f64 = 1_000.0;
 
 fn session() -> Session {
     let mut session = Session::default();
+    restore(&mut session);
+    session
+}
+
+fn restore(session: &mut Session) -> Reply {
     session
         .dispatch(Command::Restore {
             policy: Policy::default(),
             record: None,
             now: NOW,
         })
-        .unwrap();
-    session
+        .unwrap()
 }
 
 fn activation() -> Activation {
@@ -34,6 +38,165 @@ fn pending_write(reply: Reply) -> (u64, Record) {
         panic!("Expected a persistence effect");
     };
     (id, record)
+}
+
+fn provider_id(reply: Reply, expected: Operation) -> u64 {
+    let Some(Effect::Provider { id, operation, .. }) = reply.effect else {
+        panic!("Expected a provider effect");
+    };
+    assert_eq!(operation, expected);
+    id
+}
+
+fn persist(session: &mut Session, id: u64, success: bool) -> Reply {
+    session
+        .complete_effect(id, EffectCompletion::Persisted(success), Some(NOW))
+        .unwrap()
+}
+
+fn assert_failure(result: Result<impl std::fmt::Debug, Failure>, code: ErrorCode) {
+    assert_eq!(result.unwrap_err().code, code);
+}
+
+#[test]
+fn native_provider_completion_survives_cancellation_without_repeating_a_mutation() {
+    let mut session = session();
+    for (command, operation, result) in [
+        (
+            Command::Activate {
+                license_key: None,
+                now: NOW,
+            },
+            Operation::Activate,
+            ProviderReply::Activated {
+                activation: activation(),
+            },
+        ),
+        (
+            Command::Deactivate { now: NOW },
+            Operation::Deactivate,
+            ProviderReply::Deactivated,
+        ),
+    ] {
+        let activated = operation == Operation::Activate;
+        let (journal_id, journal) = pending_write(session.dispatch(command).unwrap());
+        assert_eq!(journal.pending_activation.is_some(), activated);
+        assert_eq!(journal.pending_deactivation, !activated);
+        let id = provider_id(persist(&mut session, journal_id, true), operation);
+        assert_failure(
+            session.complete_provider_effect(id, Some(NOW), false),
+            ErrorCode::OperationInProgress,
+        );
+        assert_failure(
+            session.stage_provider_completion(journal_id, ProviderReply::Deactivated),
+            ErrorCode::OperationInProgress,
+        );
+        session.stage_provider_completion(id, result).unwrap();
+        assert!(!session.has_deferred_completion());
+        assert_failure(
+            session.stage_provider_completion(id, ProviderReply::Deactivated),
+            ErrorCode::OperationInProgress,
+        );
+        for result in [
+            session.resume_completion(Some(NOW), false),
+            session.dispatch(Command::Cancel { id, now: NOW }),
+            session.dispatch(Command::Provider {
+                id,
+                result: ProviderReply::Deactivated,
+                now: NOW,
+            }),
+            session.complete_effect(
+                id,
+                EffectCompletion::Provider(Some(ProviderReply::Deactivated)),
+                Some(NOW),
+            ),
+        ] {
+            assert_failure(result, ErrorCode::OperationInProgress);
+        }
+        assert_failure(
+            session.complete_provider_effect(id, None, true),
+            ErrorCode::InvalidData,
+        );
+        assert_failure(
+            session.resume_completion(Some(f64::NAN), false),
+            ErrorCode::InvalidData,
+        );
+        assert!(session.has_deferred_completion());
+        let (write_id, candidate) =
+            pending_write(session.resume_completion(Some(NOW), true).unwrap());
+        assert!(!session.has_deferred_completion());
+        assert_failure(
+            session.stage_provider_completion(id, ProviderReply::Deactivated),
+            ErrorCode::OperationInProgress,
+        );
+        let failed = persist(&mut session, write_id, false);
+        assert_eq!(failed.error.unwrap().code, ErrorCode::StorageFailure);
+        let (retry_id, retry_record) = pending_write(
+            session
+                .dispatch(Command::RetryPersistence { now: NOW })
+                .unwrap(),
+        );
+        assert_ne!(retry_id, write_id);
+        assert_eq!(retry_record, candidate);
+        let completed = persist(&mut session, retry_id, true);
+        assert_eq!(completed.state.plan.is_licensed, activated);
+        assert_eq!(completed.state.has_activation, activated);
+        assert!(!completed.state.has_pending_persistence && completed.effect.is_none());
+        assert_eq!(
+            completed.outcome,
+            (!activated).then_some(LicenseRefreshOutcome::Deactivated)
+        );
+
+        let mut reopened = Session::default();
+        reopened
+            .stage_stored_record(&serde_json::to_vec(&candidate).unwrap())
+            .unwrap();
+        assert_eq!(restore(&mut reopened).state, completed.state);
+    }
+}
+
+#[test]
+fn native_validation_cancelled_at_clock_failure_cannot_be_applied_by_a_later_task() {
+    let mut session = session();
+    let (write, _) = pending_write(
+        session
+            .dispatch(Command::AdoptExternallyVerifiedActivation {
+                activation: activation(),
+                now: NOW,
+            })
+            .unwrap(),
+    );
+    let initial = persist(&mut session, write, true).state;
+    let id = provider_id(
+        session
+            .dispatch(Command::Refresh {
+                only_if_due: false,
+                now: NOW,
+            })
+            .unwrap(),
+        Operation::Validate,
+    );
+    session
+        .stage_provider_completion(
+            id,
+            ProviderReply::Validated {
+                validation: Validation {
+                    is_valid: false,
+                    plan_identifier: None,
+                    expires_at: None,
+                },
+            },
+        )
+        .unwrap();
+    assert_failure(
+        session.complete_provider_effect(id, None, true),
+        ErrorCode::InvalidData,
+    );
+    let resumed = session.resume_completion(Some(NOW), false).unwrap();
+    assert_eq!(resumed.error.unwrap().code, ErrorCode::Cancelled);
+    assert!(resumed.effect.is_none() && resumed.outcome.is_none());
+    assert!(!session.has_deferred_completion());
+    assert_eq!(resumed.state, initial);
 }
 
 fn unavailable_clock() -> impl Strategy<Value = Option<f64>> {

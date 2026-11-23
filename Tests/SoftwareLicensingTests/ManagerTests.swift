@@ -77,14 +77,10 @@ private final class ValidationClock: Sendable {
     self.onProvider = onProvider
   }
 
+  var hasCompletion: Bool { core.hasCompletion }
+
   func dispatch(_ command: Data) throws -> Data {
     let command = try #require(JSONSerialization.jsonObject(with: command) as? [String: Any])
-    // Host-owned drivers may contain an older Rust session.
-    if let kind = command["command"] as? String,
-      kind == "completeEffect" || kind == "resumeCompletion"
-    {
-      throw LicenseError(.invalidData)
-    }
     let reply = try core.dispatch(command)
     var object = try #require(JSONSerialization.jsonObject(with: reply) as? [String: Any])
     guard let effect = object["effect"] as? [String: Any], effect["kind"] as? String == "provider"
@@ -100,13 +96,19 @@ private final class ValidationClock: Sendable {
     onProvider()
   }
 
-  func completeProviderEffect(_ id: UInt64, now: TimeInterval, cancelled: Bool) throws -> Data {
+  func completeProviderEffect(_ id: UInt64, now: TimeInterval?, cancelled: Bool) throws -> Data {
     completions.append(id)
     completionWasCancelled = cancelled
-    return try core.dispatch([
-      "command": "provider", "id": id, "now": now,
-      "result": ["kind": "activated", "activation": LicensingNative.object(activation)],
-    ])
+    return try core.completeProvider(
+      id, result: ["kind": "activated", "activation": LicensingNative.object(activation)], now: now)
+  }
+
+  func completePersistence(_ id: UInt64, success: Bool, now: TimeInterval?) throws -> Data {
+    try core.completePersistence(id, success: success, now: now)
+  }
+
+  func resumeCompletion(now: TimeInterval?, cancelled: Bool) throws -> Data {
+    try core.resumeCompletion(now: now, cancelled: cancelled)
   }
 }
 
@@ -130,12 +132,43 @@ private final class ValidationClock: Sendable {
   let driver = try #require(initialDriver)
   let attempt = Task { @MainActor in try await manager.activate(.licenseKey("TEST-KEY")) }
   await #expect(throws: LicenseError(.invalidData)) { try await attempt.value }
-  #expect(driver.requests.count == 1 && driver.completions.isEmpty)
+  #expect(driver.requests.count == 1 && driver.completions == driver.requests)
+  #expect(driver.completionWasCancelled && driver.hasCompletion)
+  #expect(throws: LicenseError(.operationInProgress)) { try manager.reload() }
 
   clock.set(2001)
   try await manager.retryPersistence()
-  #expect(driver.completions == driver.requests && driver.completionWasCancelled)
+  #expect(driver.completions == driver.requests && !driver.hasCompletion)
   #expect(manager.state.isLicensed && storage.saveCount == 2)
+}
+
+@Test(arguments: [false, true]) @MainActor
+private func nativeDriverRetainsTheWriteOutcomeWhenTheClockFails(_ failed: Bool) async throws {
+  let activation = try await ValidationProvider().activate(.licenseKey("TEST-KEY"))
+  let clock = ValidationClock()
+  let storage = MemoryStorage()
+  if failed { storage.failOnSave = 2 }
+  storage.onSaveCompletion = { if $0 == 2 { clock.set(.infinity) } }
+  var initialDriver: NativeProviderSession?
+  let manager = try LicenseManager(
+    sessionFactory: {
+      let driver = NativeProviderSession(activation: activation) {}
+      initialDriver = driver
+      return driver
+    }, storage: storage, clock: clock.read)
+  let driver = try #require(initialDriver)
+  await #expect(throws: LicenseError(.invalidData)) {
+    try await manager.activate(.licenseKey("TEST-KEY"))
+  }
+  #expect(driver.hasCompletion && storage.saveCount == 2)
+
+  clock.set(2001)
+  try await manager.retryPersistence()
+  #expect(storage.saveCount == (failed ? 3 : 2))
+  #expect(driver.requests.count == 1 && driver.completions == driver.requests)
+  #expect(!driver.hasCompletion && manager.state.isLicensed)
+  try manager.reload()
+  #expect(manager.state.isLicensed && storage.saveCount == (failed ? 3 : 2))
 }
 
 @Test(arguments: [Double.nan, .infinity, -.infinity, 253_402_300_800]) @MainActor

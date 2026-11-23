@@ -351,9 +351,13 @@ stored activation identity. No base native internals are exposed to provider mod
 A Swift host that links its own Rust session and provider can use
 `LicenseManager(sessionFactory:storage:)`. The driver only exposes provider effect
 identifiers to Swift. `LicenseManager` stages saved bytes, acknowledges writes,
-and publishes snapshots as it does with a Swift `LicenseProvider`. The factory
-must create a fresh driver on each call so reload can validate a saved record
-before replacing the live session.
+and publishes snapshots as it does with a Swift `LicenseProvider`. The Rust
+session retains completed effects across clock failures and decides whether a failed
+write can be retried. Use `Session::stage_provider_completion` when native provider
+work finishes, then call `Session::complete_provider_effect` when the awaiting
+host resumes so cancellation can discard validation without discarding a known
+activation or release. The factory must create a fresh driver on each call so
+reload can validate a saved record before replacing the live session.
 
 ## Rust and C installation
 

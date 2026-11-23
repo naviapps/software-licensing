@@ -130,7 +130,7 @@ final class LicenseSession: @unchecked Sendable {
 
   var hasCompletion: Bool { software_licensing_session_has_completion(handle) != 0 }
 
-  func completeProvider(_ id: UInt64, result: [String: Any], now: TimeInterval) throws -> Data {
+  func completeProvider(_ id: UInt64, result: [String: Any], now: TimeInterval?) throws -> Data {
     var completion: [String: Any] = [
       "command": "completeEffect", "id": id,
       "completion": ["kind": "provider", "result": result], "now": timestamp(now),
@@ -146,19 +146,19 @@ final class LicenseSession: @unchecked Sendable {
     return try dispatch(completion)
   }
 
-  func completePersistence(_ id: UInt64, success: Bool, now: TimeInterval) throws -> Data {
+  func completePersistence(_ id: UInt64, success: Bool, now: TimeInterval?) throws -> Data {
     try dispatch([
       "command": "completeEffect", "id": id,
       "completion": ["kind": "persisted", "success": success], "now": timestamp(now),
     ])
   }
 
-  func resumeCompletion(now: TimeInterval, cancelled: Bool) throws -> Data {
+  func resumeCompletion(now: TimeInterval?, cancelled: Bool) throws -> Data {
     try dispatch(["command": "resumeCompletion", "now": timestamp(now), "cancelled": cancelled])
   }
 
-  private func timestamp(_ instant: TimeInterval) -> Any {
-    if instant.isFinite { return instant }
+  private func timestamp(_ instant: TimeInterval?) -> Any {
+    if let instant, instant.isFinite { return instant }
     return NSNull()
   }
 

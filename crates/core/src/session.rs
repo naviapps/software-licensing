@@ -164,6 +164,17 @@ struct Pending {
 struct Active {
     id: u64,
     operation: Operation,
+    provider_completion: Option<ProviderReply>,
+}
+
+impl Active {
+    fn new(id: u64, operation: Operation) -> Self {
+        Self {
+            id,
+            operation,
+            provider_completion: None,
+        }
+    }
 }
 
 /// A serialized session. No network, clock, keychain or UI dependencies.
@@ -195,6 +206,53 @@ impl Session {
         self.deferred_completion.is_some()
     }
 
+    /// Retain a native provider reply before notifying the host that its work is done.
+    /// Only the initiating host may complete this receipt; it is not yet retryable.
+    pub fn stage_provider_completion(
+        &mut self,
+        id: u64,
+        reply: ProviderReply,
+    ) -> Result<(), Failure> {
+        if self.pending.is_some() || self.has_deferred_completion() {
+            return Err(Failure::new(ErrorCode::OperationInProgress));
+        }
+        let active = self
+            .active
+            .as_mut()
+            .filter(|active| active.id == id && active.provider_completion.is_none())
+            .ok_or_else(|| Failure::new(ErrorCode::OperationInProgress))?;
+        active.provider_completion = Some(reply);
+        Ok(())
+    }
+
+    /// Complete a staged provider receipt after the initiating host observes cancellation.
+    /// A cancelled validation is discarded; known mutation outcomes remain eligible to save.
+    /// A missing or invalid timestamp makes this outcome eligible for `resume_completion`.
+    pub fn complete_provider_effect(
+        &mut self,
+        id: u64,
+        now: Option<f64>,
+        cancelled: bool,
+    ) -> Result<Reply, Failure> {
+        let active = self
+            .active
+            .as_mut()
+            .filter(|active| active.id == id)
+            .ok_or_else(|| Failure::new(ErrorCode::OperationInProgress))?;
+        let reply = active
+            .provider_completion
+            .take()
+            .ok_or_else(|| Failure::new(ErrorCode::OperationInProgress))?;
+        let reply = if cancelled && active.operation == Operation::Validate {
+            ProviderReply::Failed {
+                failure: Failure::new(ErrorCode::Cancelled),
+            }
+        } else {
+            reply
+        };
+        self.complete_effect(id, EffectCompletion::Provider(Some(reply)), now)
+    }
+
     /// Acknowledge a finished effect. A missing or invalid timestamp keeps its
     /// outcome pending so the host never has to run the effect again.
     pub fn complete_effect(
@@ -205,7 +263,10 @@ impl Session {
     ) -> Result<Reply, Failure> {
         let current = match &completion {
             EffectCompletion::Provider(_) => {
-                self.pending.is_none() && self.active.as_ref().is_some_and(|a| a.id == id)
+                self.pending.is_none()
+                    && self.active.as_ref().is_some_and(|active| {
+                        active.id == id && active.provider_completion.is_none()
+                    })
             }
             EffectCompletion::Persisted(_) => self
                 .pending
@@ -299,7 +360,11 @@ impl Session {
         if !self.initialized && !matches!(command, Command::Restore { .. }) {
             return Err(Failure::new(ErrorCode::InvalidData));
         }
-        if self.has_deferred_completion()
+        if (self.has_deferred_completion()
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.provider_completion.is_some()))
             && matches!(
                 command,
                 Command::Provider { .. } | Command::Persisted { .. } | Command::Cancel { .. }
@@ -476,10 +541,7 @@ impl Session {
                         activation: self.record.activation.clone(),
                     };
                     if self.record.pending_deactivation {
-                        self.active = Some(Active {
-                            id,
-                            operation: Operation::Deactivate,
-                        });
+                        self.active = Some(Active::new(id, Operation::Deactivate));
                         effect = Some(provider);
                     } else {
                         let mut record = self.record.clone();
@@ -641,10 +703,9 @@ impl Session {
                     });
                     error = pending.error;
                     self.active = match &effect {
-                        Some(Effect::Provider { id, operation, .. }) => Some(Active {
-                            id: *id,
-                            operation: *operation,
-                        }),
+                        Some(Effect::Provider { id, operation, .. }) => {
+                            Some(Active::new(*id, *operation))
+                        }
                         _ => None,
                     };
                 } else {
@@ -708,7 +769,7 @@ impl Session {
     fn start_validation(&mut self) -> Result<Effect, Failure> {
         let id = self.next_id()?;
         let operation = Operation::Validate;
-        self.active = Some(Active { id, operation });
+        self.active = Some(Active::new(id, operation));
         Ok(Effect::Provider {
             id,
             operation,
