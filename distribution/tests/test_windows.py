@@ -247,7 +247,9 @@ class WindowsOutputTests(unittest.TestCase):
             symbol_prefix="software_licensing_",
             specification="native.toml",
         )
-        self.assertEqual(commands.call_args_list[0].args[0], ["cargo", "fetch", "--locked"])
+        self.assertEqual(
+            commands.call_args_list[0].args[0], list(windows_delivery.locked_fetch_args())
+        )
         self.assertTrue(
             all(
                 call.args[0][call.args[0].index("--target") + 1] == driver.TARGET

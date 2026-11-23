@@ -2,15 +2,15 @@
 """Validate the Windows x64 SDK and independent NuGet consumer on x64 or ARM64."""
 
 import argparse
-import hashlib
 import platform
 import sys
 import tempfile
 from pathlib import Path
 
 from sdk_tooling.adapters import load, support_inputs
+from sdk_tooling.artifacts import file_sha256 as sha256
 from sdk_tooling.native_plan import ffi_product
-from sdk_tooling.windows_delivery import RID, TARGET, X64Acceptance
+from sdk_tooling.windows_delivery import RID, TARGET, X64Acceptance, publish_x64
 
 from distribution.nuget import PACKAGE, check_package
 
@@ -20,22 +20,6 @@ RECEIPT = "software-licensing-windows.json"
 
 def acceptance_source():
     return load("windows_delivery").acceptance_source(ROOT, match_actions=True)
-
-
-def sha256(path):
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
-def publish_x64(package, receipt, *, output_dir, artifact_root, tooling):
-    load("windows_delivery").publish_x64(
-        package,
-        receipt,
-        receipt_name=RECEIPT,
-        output_dir=output_dir,
-        artifact_root=artifact_root,
-        tooling=tooling,
-    )
 
 
 def main(argv=None):
@@ -53,8 +37,7 @@ def main(argv=None):
     env, dotnet = acceptance.env, acceptance.dotnet
     artifact_root = load("vm_environment").artifacts_dir(env)
     native = ffi_product(ROOT, factory=load("ffi").FfiProduct)
-    # Retained notices include dependencies from the macOS builds.
-    built = acceptance.build(native, fetch_all=True)
+    built = acceptance.build(native)
     output = ROOT / ".native-build"
     output.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=output, prefix="win-x64-candidate-") as directory:
@@ -155,7 +138,12 @@ def main(argv=None):
             "dllSha256": expected[dll.name],
         }
         publish_x64(
-            package, receipt, output_dir=output, artifact_root=artifact_root, tooling=artifacts
+            package,
+            receipt,
+            receipt_name=RECEIPT,
+            output_dir=output,
+            artifact_root=artifact_root,
+            tooling=artifacts,
         )
     print(f"Windows x64 SoftwareLicensing acceptance passed on {acceptance.host}.")
 
