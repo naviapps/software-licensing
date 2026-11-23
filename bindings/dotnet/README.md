@@ -75,10 +75,10 @@ with a clean committed checkout on an owned Windows 11 ARM64 worker. Prepare
 native ARM64 Python and the pinned ARM64 Rust toolchain with the
 `x86_64-pc-windows-msvc` standard library. Select `HostARM64\x64` with
 `VsDevCmd.bat -host_arch=arm64 -arch=x64` and set `DOTNET_BIN` to the absolute
-path of the pinned x64 .NET SDK.
+path of the pinned x64 .NET SDK. Install the SDK's pinned uv and Python with mise.
 
 ```powershell
-python -E -S -B tools/windows.py --architecture x64
+mise run sdk-tooling -- python fixtures/distribution/windows.py --architecture x64
 ```
 
 This verifies a single DLL across C, .NET recovery and DPAPI fixtures, and the
@@ -90,7 +90,6 @@ emulation.
 
 ### macOS checks
 
-With the [pinned tooling checkout](../../README.md#distribution-checks)
-configured, `mise exec -- make test-dotnet` on macOS verifies the tracked
+`mise exec -- make test-dotnet` on macOS verifies the tracked
 framework and runs managed lifecycle fixtures against it. It exercises fake
 providers and in-memory storage. Windows x64 validation exercises DPAPI.

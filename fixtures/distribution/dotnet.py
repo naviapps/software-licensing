@@ -7,13 +7,14 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from _tooling import load
-from dotnet_consumer import PACKAGE, check_package
-from native import builder
+from sdk_tooling.adapters import load
+from sdk_tooling.native_plan import builder
+
+from fixtures.distribution.dotnet_consumer import PACKAGE, check_package
 
 
 def main():
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parents[2]
     env = dict(
         os.environ,
         DOTNET_CLI_TELEMETRY_OPTOUT="1",
@@ -34,7 +35,7 @@ def main():
         nuget_config=root / "bindings/dotnet/NuGet.Config",
         verify_style=True,
     )
-    native = builder()
+    native = builder(root)
     framework = (
         native.artifact / "macos-arm64_x86_64" / (native.module + ".framework") / native.module
     )

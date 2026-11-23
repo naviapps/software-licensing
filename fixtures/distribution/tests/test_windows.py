@@ -5,7 +5,6 @@ import importlib.util
 import json
 import os
 import shutil
-import sys
 import tempfile
 import unittest
 from contextlib import nullcontext
@@ -13,20 +12,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tools._tooling import load
+from sdk_tooling.adapters import load
 
 
 def load_driver():
-    tools = Path(__file__).resolve().parents[1]
+    fixtures = Path(__file__).resolve().parents[1]
     spec = importlib.util.spec_from_file_location(
-        "software_licensing_windows", tools / "windows.py"
+        "software_licensing_windows", fixtures / "windows.py"
     )
     driver = importlib.util.module_from_spec(spec)
-    with (
-        patch.object(sys, "path", [str(tools), *sys.path]),
-        patch.dict(sys.modules, {"_tooling": SimpleNamespace(load=load, support_inputs=Mock())}),
-    ):
-        spec.loader.exec_module(driver)
+    spec.loader.exec_module(driver)
     return driver
 
 
@@ -107,6 +102,9 @@ class WindowsOutputTests(unittest.TestCase):
         fixture.parent.mkdir(parents=True)
         fixture.write_text('System.Console.WriteLine("synthetic");')
         (root / "mise.toml").write_text('[tools]\ndotnet = "10.0.403"\n')
+        (root / "native.toml").write_bytes(
+            b'[[artifacts]]\nid = "sdk"\nsymbol_prefix = "software_licensing_"\nminimum_macos = "26.0"\n'
+        )
         output = root / ".native-build"
         built = output / "accepted"
         built.mkdir(parents=True)
@@ -126,7 +124,7 @@ class WindowsOutputTests(unittest.TestCase):
 
         dotnet = root / "dotnet-x64/dotnet.exe"
         source = ("a" * 40, "b" * 64)
-        tool_inputs = {"tools/_tooling.py": "c" * 64}
+        tool_inputs = {"mise.toml": "c" * 64}
         msvc_targets = {"arm64": "aarch64-pc-windows-msvc", "x64": driver.TARGET}
         toolchain = {"backend": "msvc", "host": msvc_targets[host], "target": driver.TARGET}
         receipt = {
@@ -233,10 +231,10 @@ class WindowsOutputTests(unittest.TestCase):
         )
         windows.verify_artifact.assert_called_once_with(native, "x64", environment=env)
         local_modules["native"].NativeBuilder.assert_called_once_with(
-            root,
+            root.resolve(),
             symbol_prefix="software_licensing_",
             minimum_macos="26.0",
-            specification="tools/windows.py",
+            specification="native.toml",
         )
         self.assertTrue(
             all(

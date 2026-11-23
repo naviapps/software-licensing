@@ -14,14 +14,14 @@ Maintainers use [build and acceptance](#build-and-acceptance) and
 
 ## Layout
 
-| Path                                             | Contents                                                  |
-| ------------------------------------------------ | --------------------------------------------------------- |
-| `crates/`                                        | Rust implementation and C API in `crates/ffi/include/`    |
-| `crates/ffi/tests/c/`                            | C ABI tests                                               |
-| `Sources/`, `Tests/`                             | Swift bindings and tests                                  |
-| `bindings/dotnet/src/<project>/`                 | Named .NET source projects                                |
-| `bindings/dotnet/tests/SoftwareLicensing.Tests/` | .NET test project and fixtures                            |
-| `Artifacts/`, `ThirdParty/`, `tools/`            | Native packages, upstream notices and development tooling |
+| Path                                                  | Contents                                                    |
+| ----------------------------------------------------- | ----------------------------------------------------------- |
+| `crates/`                                             | Rust implementation and C API in `crates/ffi/include/`      |
+| `crates/ffi/tests/c/`                                 | C ABI tests                                                 |
+| `Sources/`, `Tests/`                                  | Swift bindings and tests                                    |
+| `bindings/dotnet/src/<project>/`                      | Named .NET source projects                                  |
+| `bindings/dotnet/tests/SoftwareLicensing.Tests/`      | .NET test project and fixtures                              |
+| `Artifacts/`, `ThirdParty/`, `fixtures/distribution/` | Native packages, upstream notices and distribution fixtures |
 
 ## Products
 
@@ -422,15 +422,13 @@ checks use synthetic fixture providers.
 
 ### Distribution checks
 
-Set `NAVI_SDK_TOOLING_SOURCE` to the absolute path to a clean SDK Tooling
-checkout at the revision pinned by the `sdk-tooling` task in [`mise.toml`](mise.toml).
-With that checkout
-configured, run `mise exec -- make check-distribution` for native provenance,
+Run `mise exec -- make check-distribution` for native provenance,
 C ownership under AddressSanitizer, .NET and isolated NuGet consumers, and
 portable build-driver tests. The macOS check packages the checked-in framework
 and the Windows check packages a freshly built x64 DLL. Both fixtures load the
 packaged library through the runtime. Reuse the pinned tooling for `make native`
-after changing native inputs and for `make native-verify`.
+after changing native inputs and for `make native-verify`. [`native.toml`](native.toml)
+selects the FFI artifact and records its build policy.
 
 Use `mise exec -- make test-installed-consumers` from a clean, complete SDK
 checkout. The Rust fixture uses a local mirror of the exact SDK commit. The C

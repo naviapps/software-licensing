@@ -11,10 +11,12 @@ import tempfile
 import tomllib
 from pathlib import Path
 
-from _tooling import load, support_inputs
-from dotnet_consumer import PACKAGE, check_package
+from sdk_tooling.adapters import load, support_inputs
+from sdk_tooling.native_plan import builder
 
-ROOT = Path(__file__).resolve().parent.parent
+from fixtures.distribution.dotnet_consumer import PACKAGE, check_package
+
+ROOT = Path(__file__).resolve().parents[2]
 TARGET = "x86_64-pc-windows-msvc"
 RID = "win-x64"
 RECEIPT = "software-licensing-windows.json"
@@ -47,7 +49,7 @@ def main(argv=None):
     if sys.platform != "win32" or sys.getwindowsversion().build < 26100:
         raise ValueError("Windows 11 build 26100 or later is required for the DPAPI fixture")
     source = acceptance_source()
-    tool_inputs = support_inputs()
+    tool_inputs = support_inputs(ROOT)
     windows = load("windows")
     bindings = load("bindings")
     artifacts = load("artifacts")
@@ -62,12 +64,7 @@ def main(argv=None):
     ).strip()
     if sdk_version != tomllib.loads((ROOT / "mise.toml").read_text())["tools"]["dotnet"]:
         raise ValueError("Use the pinned x64 .NET SDK version from mise.toml")
-    native = load("native").NativeBuilder(
-        ROOT,
-        symbol_prefix="software_licensing_",
-        minimum_macos="26.0",
-        specification="tools/windows.py",
-    )
+    native = builder(ROOT, tooling=load)
 
     def run(*args):
         subprocess.run([str(a) for a in args], cwd=ROOT, env=env, check=True)
@@ -177,7 +174,7 @@ def main(argv=None):
             raise ValueError("Packaged DLL staging changed during acceptance")
         if source != acceptance_source():
             raise ValueError("Windows x64 acceptance source changed")
-        if tool_inputs != support_inputs():
+        if tool_inputs != support_inputs(ROOT):
             raise ValueError("Windows x64 build tools changed during acceptance")
         commit, fingerprint = source
         receipt = {
