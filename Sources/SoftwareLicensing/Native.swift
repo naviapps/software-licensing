@@ -91,7 +91,7 @@ package enum LicensingNative {
         case .value: software_licensing_value(pointer, bytes.count)
         case .accessReply: software_licensing_access_reply(pointer, bytes.count)
         }
-      return try consume(result)
+      return try consume(result).json
     }
   }
 
@@ -100,18 +100,33 @@ package enum LicensingNative {
     try decoder().decode(T.self, from: invoke(.value, ["kind": kind, "value": value]))
   }
 
-  static func consume(_ owner: OpaquePointer?) throws -> Data {
+  static func consume(_ owner: OpaquePointer?) throws -> RawLicenseReply {
     guard let owner else { throw LicenseError(.invalidData) }
     defer { software_licensing_json_destroy(owner) }
     let view = software_licensing_json_view(owner)
-    guard let bytes = view.data, view.length <= maximumJSONBytes else {
+    guard let bytes = view.data, (1...maximumJSONBytes).contains(view.length) else {
       throw LicenseError(.invalidData)
     }
     let data = Data(bytes: bytes, count: view.length)
     if view.code != 0 {
       throw (try? decoder().decode(LicenseError.self, from: data)) ?? LicenseError(.invalidData)
     }
-    return data
+    var length = 0
+    guard let record = software_licensing_json_persistence_record(owner, &length) else {
+      return RawLicenseReply(data)
+    }
+    guard (1...maximumJSONBytes).contains(length) else { throw LicenseError(.invalidData) }
+    return RawLicenseReply(data, record: Data(bytes: record, count: length))
+  }
+}
+
+struct RawLicenseReply {
+  let json: Data
+  let record: Data?
+
+  init(_ json: Data, record: Data? = nil) {
+    self.json = json
+    self.record = record
   }
 }
 
@@ -130,7 +145,9 @@ final class LicenseSession: @unchecked Sendable {
 
   var hasCompletion: Bool { software_licensing_session_has_completion(handle) != 0 }
 
-  func completeProvider(_ id: UInt64, result: [String: Any], now: TimeInterval?) throws -> Data {
+  func completeProvider(_ id: UInt64, result: [String: Any], now: TimeInterval?) throws
+    -> RawLicenseReply
+  {
     var completion: [String: Any] = [
       "command": "completeEffect", "id": id,
       "completion": ["kind": "provider", "result": result], "now": timestamp(now),
@@ -146,14 +163,16 @@ final class LicenseSession: @unchecked Sendable {
     return try dispatch(completion)
   }
 
-  func completePersistence(_ id: UInt64, success: Bool, now: TimeInterval?) throws -> Data {
+  func completePersistence(_ id: UInt64, success: Bool, now: TimeInterval?) throws
+    -> RawLicenseReply
+  {
     try dispatch([
       "command": "completeEffect", "id": id,
       "completion": ["kind": "persisted", "success": success], "now": timestamp(now),
     ])
   }
 
-  func resumeCompletion(now: TimeInterval?, cancelled: Bool) throws -> Data {
+  func resumeCompletion(now: TimeInterval?, cancelled: Bool) throws -> RawLicenseReply {
     try dispatch(["command": "resumeCompletion", "now": timestamp(now), "cancelled": cancelled])
   }
 
@@ -162,11 +181,11 @@ final class LicenseSession: @unchecked Sendable {
     return NSNull()
   }
 
-  func dispatch(_ object: [String: Any]) throws -> Data {
+  func dispatch(_ object: [String: Any]) throws -> RawLicenseReply {
     try dispatch(LicensingNative.encode(object))
   }
 
-  private func dispatch(_ data: Data) throws -> Data {
+  private func dispatch(_ data: Data) throws -> RawLicenseReply {
     try data.withUnsafeBytes { bytes in
       try LicensingNative.consume(
         software_licensing_session_dispatch(

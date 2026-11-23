@@ -14,6 +14,7 @@ use zeroize::Zeroizing;
 pub struct Json {
     code: u32,
     bytes: Zeroizing<Vec<u8>>,
+    persistence_record: Option<Zeroizing<Vec<u8>>>,
 }
 #[repr(C)]
 pub struct JsonView {
@@ -30,7 +31,22 @@ impl Json {
         Box::into_raw(Box::new(Self {
             code,
             bytes: Zeroizing::new(bytes),
+            persistence_record: None,
         }))
+    }
+
+    fn reply(value: Result<Reply, Failure>) -> *mut Self {
+        match value {
+            Ok(reply) => {
+                let (bytes, persistence_record) = reply.into_wire_parts();
+                Box::into_raw(Box::new(Self {
+                    code: 0,
+                    bytes,
+                    persistence_record,
+                }))
+            }
+            Err(error) => Self::result::<()>(Err(error)),
+        }
     }
 }
 fn invalid() -> Failure {
@@ -44,7 +60,7 @@ unsafe fn input<'a>(data: *const u8, length: usize) -> Result<&'a [u8], Failure>
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn software_licensing_abi_version() -> u32 {
-    5
+    6
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn software_licensing_session_create() -> *mut Mutex<Session> {
@@ -150,7 +166,7 @@ pub unsafe extern "C" fn software_licensing_session_dispatch(
         let session = unsafe { session.as_ref() }.ok_or_else(invalid)?;
         dispatch(session, unsafe { input(data, length)? })
     })();
-    Json::result(result)
+    Json::reply(result)
 }
 
 /// # Safety
@@ -247,7 +263,6 @@ struct StorageInput {
     directory: String,
     namespace: String,
     operation: String,
-    record: Option<serde_json::Value>,
 }
 
 fn decode_stored_record(bytes: Option<Vec<u8>>) -> Result<serde_json::Value, Failure> {
@@ -258,27 +273,30 @@ fn decode_stored_record(bytes: Option<Vec<u8>>) -> Result<serde_json::Value, Fai
 }
 
 /// # Safety
-/// Input must be readable for length bytes. On Windows this performs effects in
-/// the supplied host-owned private directory; on other OSes it is unsupported.
+/// Input must be readable for length bytes. For a save, record must be readable
+/// for record_length bytes. Other operations require a null/zero record.
+/// On Windows this uses the supplied host-owned private directory.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn software_licensing_windows_storage(
     data: *const u8,
     length: usize,
+    record: *const u8,
+    record_length: usize,
 ) -> *mut Json {
     let result = (|| {
         let v: StorageInput = software_licensing::decode(unsafe { input(data, length)? })?;
         let store =
             software_licensing_windows::WindowsLicenseStorage::new(v.directory, &v.namespace)?;
+        let absent_record = record.is_null() && record_length == 0;
         match v.operation.as_str() {
-            "load" => decode_stored_record(store.load()?),
+            "load" if absent_record => decode_stored_record(store.load()?),
             "save" => {
-                let bytes = Zeroizing::new(
-                    serde_json::to_vec(&v.record.ok_or_else(invalid)?).map_err(|_| invalid())?,
-                );
-                store.save(&bytes)?;
+                let bytes = unsafe { input(record, record_length)? };
+                software_licensing::decode_record_json(bytes)?;
+                store.save(bytes)?;
                 Ok(serde_json::Value::Null)
             }
-            "delete" => {
+            "delete" if absent_record => {
                 store.delete()?;
                 Ok(serde_json::Value::Null)
             }
@@ -307,6 +325,20 @@ pub unsafe extern "C" fn software_licensing_json_view(owner: *const Json) -> Jso
             length: 0,
         },
     }
+}
+/// # Safety
+/// Owner must be live until all borrowed byte reads finish. Length may be null
+/// or writable for one `usize`. Null owner or absent record returns null/zero.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn software_licensing_json_persistence_record(
+    owner: *const Json,
+    length: *mut usize,
+) -> *const u8 {
+    let bytes = unsafe { owner.as_ref() }.and_then(|reply| reply.persistence_record.as_deref());
+    if let Some(length) = unsafe { length.as_mut() } {
+        *length = bytes.map_or(0, Vec::len);
+    }
+    bytes.map_or(std::ptr::null(), |record| record.as_ptr())
 }
 /// # Safety
 /// Owner must be null or exclusively owned, with no outstanding byte reads.

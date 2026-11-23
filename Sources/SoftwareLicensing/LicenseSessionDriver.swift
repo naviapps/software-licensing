@@ -3,6 +3,7 @@ import Foundation
 /// Host bridge for a Rust session that executes its own provider effects.
 /// Use the command and reply JSON of `software_licensing::Session`, with
 /// provider effects represented as `{ "kind": "provider", "id": ... }`.
+/// Persistence effects carry the saved object in their `record` field.
 @MainActor
 public protocol LicenseSessionDriver: AnyObject {
   func dispatch(_ command: Data) throws -> Data

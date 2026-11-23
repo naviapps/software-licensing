@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::cell::Cell;
+use zeroize::Zeroizing;
 
 #[derive(Deserialize)]
 #[serde(
@@ -152,6 +153,54 @@ pub struct Reply {
     pub error: Option<Failure>,
     pub needs_refresh: bool,
 }
+
+impl Reply {
+    /// Encode host metadata and the optional UTF-8 record as independent buffers.
+    /// A persistence effect contains the receipt ID in the metadata. Save the
+    /// accompanying record bytes once before acknowledging that receipt.
+    pub fn into_wire_parts(self) -> (Zeroizing<Vec<u8>>, Option<Zeroizing<Vec<u8>>>) {
+        #[derive(Serialize)]
+        struct PersistEffect {
+            kind: &'static str,
+            id: u64,
+        }
+
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct PersistenceReply {
+            state: State,
+            effect: PersistEffect,
+            outcome: Option<LicenseRefreshOutcome>,
+            error: Option<Failure>,
+            needs_refresh: bool,
+        }
+
+        if let Some(Effect::Persist { id, record }) = self.effect {
+            let record =
+                Zeroizing::new(serde_json::to_vec(&record).expect("finite license record"));
+            let metadata = PersistenceReply {
+                state: self.state,
+                effect: PersistEffect {
+                    kind: "persist",
+                    id,
+                },
+                outcome: self.outcome,
+                error: self.error,
+                needs_refresh: self.needs_refresh,
+            };
+            (
+                Zeroizing::new(serde_json::to_vec(&metadata).expect("finite licensing output")),
+                Some(record),
+            )
+        } else {
+            (
+                Zeroizing::new(serde_json::to_vec(&self).expect("finite licensing output")),
+                None,
+            )
+        }
+    }
+}
+
 struct Pending {
     id: u64,
     awaiting_completion: bool,

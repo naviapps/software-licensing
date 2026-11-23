@@ -42,11 +42,17 @@ int main(void) {
     assert(strstr(reply, "\"lastOperationFailure\":{\"code\":\"requestFailure\""));
 
     // The owned fixture supplies synthetic entitlement and simulates persistence in memory.
-    dispatch(session,
-             "{\"command\":\"adoptExternallyVerifiedActivation\",\"activation\":{"
-             "\"source\":\"fixture\",\"planIdentifier\":\"paid\","
-             "\"activatedAt\":1000,\"expiresAt\":1020},\"now\":1000}",
-             0, reply, sizeof reply);
+    const char *adopt = "{\"command\":\"adoptExternallyVerifiedActivation\",\"activation\":{"
+                        "\"source\":\"fixture\",\"planIdentifier\":\"paid\","
+                        "\"activatedAt\":1000,\"expiresAt\":1020},\"now\":1000}";
+    SoftwareLicensingJson *pending =
+        software_licensing_session_dispatch(session, (const uint8_t *)adopt, strlen(adopt));
+    size_t stored_length = 0;
+    const uint8_t *candidate = software_licensing_json_persistence_record(pending, &stored_length);
+    uint8_t stored_record[4096];
+    assert(candidate && stored_length > 0 && stored_length <= sizeof stored_record);
+    memcpy(stored_record, candidate, stored_length);
+    copy_result(pending, 0, reply, sizeof reply);
     assert(strstr(reply, "\"isLicensed\":false"));
     assert(strstr(reply, "\"kind\":\"persist\""));
     const char *field = strstr(reply, "\"id\":");
@@ -68,6 +74,17 @@ int main(void) {
     dispatch(session, acknowledgement, 1, reply, sizeof reply);
     assert(strstr(reply, "\"code\":\"operationInProgress\""));
 
+    software_licensing_session_destroy(session);
+    session = software_licensing_session_create();
+    assert(session != NULL);
+    copy_result(software_licensing_session_stage_record(session, stored_record, stored_length), 0,
+                reply, sizeof reply);
+    dispatch(session,
+             "{\"command\":\"restore\",\"policy\":{\"isEnabled\":true,"
+             "\"validationInterval\":86400,\"failureGracePeriod\":604800,"
+             "\"serverFailureGracePeriod\":86400},\"now\":1001}",
+             0, reply, sizeof reply);
+    assert(strstr(reply, "\"isLicensed\":true"));
     dispatch(session, "{\"command\":\"snapshot\",\"now\":1020}", 0, reply, sizeof reply);
     assert(strstr(reply, "\"status\":\"expired\""));
     assert(strstr(reply, "\"isLicensed\":false"));

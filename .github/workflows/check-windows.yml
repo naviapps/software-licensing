@@ -21,6 +21,4 @@ jobs:
           persist-credentials: false
       - uses: naviapps/sdk-tooling/.github/actions/test-rust-windows@main
         with:
-          managed-project: bindings/dotnet/tests/SoftwareLicensing.Tests/SoftwareLicensing.Tests.csproj
-          native-package: software-licensing-ffi
-          native-property: SoftwareLicensingNativeLibrary
+          test-bindings: "true"

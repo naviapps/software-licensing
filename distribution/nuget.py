@@ -4,7 +4,18 @@ PACKAGE = "NaviApps.SoftwareLicensing"
 
 
 def check_package(
-    nuget, dotnet, *, root, package, version, rid, library, output, env, exclude_paths
+    nuget,
+    dotnet,
+    *,
+    root,
+    package,
+    version,
+    rid,
+    library,
+    output,
+    env,
+    exclude_paths,
+    native_aot=False,
 ):
     notices = {
         "licenses/" + path.relative_to(root / "ThirdParty").as_posix(): path
@@ -16,6 +27,13 @@ def check_package(
         expected_files={"LICENSE": root / "LICENSE", "README.md": root / "README.md", **notices},
         runtime_files={f"runtimes/{rid}/native/{library.name}": library},
     )
+    properties = {"Nullable": "enable", "TreatWarningsAsErrors": "true"}
+    if native_aot:
+        properties.update(
+            DefineConstants="NATIVE_AOT_FIXTURE",
+            ILLinkTreatWarningsAsErrors="true",
+            JsonSerializerIsReflectionEnabledByDefault="false",
+        )
     nuget.run_isolated_consumer(
         dotnet,
         packages=[package],
@@ -25,6 +43,7 @@ def check_package(
         env=env,
         exclude_paths=exclude_paths,
         runtime=rid,
-        properties={"Nullable": "enable", "TreatWarningsAsErrors": "true"},
+        properties=properties,
+        native_aot=native_aot,
     )
     return digest

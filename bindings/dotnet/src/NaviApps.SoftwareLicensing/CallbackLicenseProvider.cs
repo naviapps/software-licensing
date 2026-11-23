@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace NaviApps.SoftwareLicensing;
 
 /// <summary>Adapts a host-owned, read-only access check to the license lifecycle.</summary>
@@ -62,24 +60,13 @@ public sealed class CallbackLicenseProvider : ILicenseProvider
         await PerformAsync("deactivate", activation, null, cancellationToken).ConfigureAwait(false);
     }
 
-    private sealed record Reply(LicenseActivation? Activation, LicenseValidationResult? Validation, LicenseFailure? Failure);
-    private sealed record Decision(bool NeedsAccessCheck, Reply? Reply);
-
-    private async Task<Reply> PerformAsync(string operation, LicenseActivation? activation, string? licenseKey, CancellationToken token)
+    private async Task<ProviderResult> PerformAsync(string operation, LicenseActivation? activation, string? licenseKey, CancellationToken token)
     {
-        Decision Decide(bool? hasAccess = null)
-            => Native.MapAccess(new
-            {
-                configuration.Source,
-                configuration.PlanIdentifier,
-                operation,
-                activation,
-                licenseKey,
-                hasAccess,
-                now = clock(),
-            }).Deserialize<Decision>(Native.Json) ?? throw NotApplied(LicenseErrorCode.UnexpectedProviderResponse);
+        AccessDecision Decide(bool? hasAccess = null)
+            => Native.MapAccess(new(configuration.Source, configuration.PlanIdentifier, operation,
+                activation, licenseKey, hasAccess, clock()));
 
-        Decision decision;
+        AccessDecision decision;
         try
         {
             token.ThrowIfCancellationRequested();

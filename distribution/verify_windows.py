@@ -25,7 +25,10 @@ def acceptance_source():
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--architecture", choices=("x64",), default="x64")
-    parser.parse_args(argv)
+    parser.add_argument(
+        "--native-aot", action="store_true", help="Publish and run the win-x64 Native AOT consumer"
+    )
+    args = parser.parse_args(argv)
     if sys.platform != "win32" or sys.getwindowsversion().build < 26100:
         raise ValueError("Windows 11 build 26100 or later is required for the DPAPI fixture")
     source = acceptance_source()
@@ -103,6 +106,7 @@ def main(argv=None):
             output=candidate,
             env=env,
             exclude_paths=(ROOT / "target", built, candidate),
+            native_aot=args.native_aot,
         )
         verify_staged()
         if sha256(packed_dll) != expected[dll.name]:
@@ -137,6 +141,8 @@ def main(argv=None):
             "packages": {package.name: package_hash},
             "dllSha256": expected[dll.name],
         }
+        if args.native_aot:
+            receipt["nativeAotFixtureExecuted"] = True
         publish_x64(
             package,
             receipt,

@@ -80,7 +80,7 @@ public sealed class LicenseManager : IDisposable
             if (restorationBlocked) return true;
             ObjectDisposedException.ThrowIf(disposed, this);
             if (time is not { } now) return true;
-            try { return Read(SendAt("needsRefresh", now)).NeedsRefresh; }
+            try { return Read(SendAt(new("needsRefresh", now))).NeedsRefresh; }
             catch (LicenseException error) when (error.Failure.Code == LicenseErrorCode.InvalidData)
             {
                 return true;
@@ -100,7 +100,7 @@ public sealed class LicenseManager : IDisposable
         ObjectDisposedException.ThrowIf(disposed, this);
         if (time is { } now)
         {
-            try { return Read(SendAt("snapshot", now)).State; }
+            try { return Read(SendAt(new("snapshot", now))).State; }
             catch (LicenseException error) when (error.Failure.Code == LicenseErrorCode.InvalidData) { }
         }
         var unavailable = UnavailableState.Value;
@@ -138,7 +138,7 @@ public sealed class LicenseManager : IDisposable
     {
         await RecoverAsync(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        var start = Send("activate", ("licenseKey", request.LicenseKey));
+        var start = Send(new("activate", LicenseKey: request.LicenseKey));
         return (await DriveAsync(start, cancellationToken).ConfigureAwait(false)).State;
     }
     /// <summary>Persists an activation whose authority, product scope and current entitlement the host has verified.</summary>
@@ -147,7 +147,7 @@ public sealed class LicenseManager : IDisposable
     public LicenseState AdoptExternallyVerifiedActivation(LicenseActivation activation)
     {
         RequireRestored();
-        return Read(Persist(Send("adoptExternallyVerifiedActivation", ("activation", activation)))).State;
+        return Read(Persist(Send(new("adoptExternallyVerifiedActivation", Activation: activation)))).State;
     }
 
     /// <summary>Clears pending activation after authoritative external proof that the saved request did not apply.</summary>
@@ -156,7 +156,7 @@ public sealed class LicenseManager : IDisposable
     public LicenseState ConfirmActivationNotAppliedAfterExternalVerification()
     {
         RequireRestored();
-        return Read(Persist(Send("confirmActivationNotAppliedAfterExternalVerification"))).State;
+        return Read(Persist(Send(new("confirmActivationNotAppliedAfterExternalVerification")))).State;
     }
 
     /// <summary>Clears pending deactivation after authoritative external proof that the saved instance was released.</summary>
@@ -165,7 +165,7 @@ public sealed class LicenseManager : IDisposable
     public LicenseState ConfirmDeactivationAfterExternalVerification()
     {
         RequireRestored();
-        return Read(Persist(Send("confirmDeactivationAfterExternalVerification"))).State;
+        return Read(Persist(Send(new("confirmDeactivationAfterExternalVerification")))).State;
     }
 
     /// <summary>Refreshes manually by default; onlyIfDue lets Rust honor its persisted refresh deadline.</summary>
@@ -173,7 +173,7 @@ public sealed class LicenseManager : IDisposable
     {
         await RecoverAsync(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        var start = Send("refresh", ("onlyIfDue", onlyIfDue));
+        var start = Send(new("refresh", OnlyIfDue: onlyIfDue));
         var reply = await DriveAsync(start, cancellationToken).ConfigureAwait(false);
         return new(reply.Outcome ?? throw new LicenseException(LicenseErrorCode.UnexpectedProviderResponse), reply.State);
     }
@@ -181,7 +181,7 @@ public sealed class LicenseManager : IDisposable
     {
         await RecoverAsync(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        var start = Send("deactivate");
+        var start = Send(new("deactivate"));
         return (await DriveAsync(start, cancellationToken).ConfigureAwait(false)).State;
     }
     /// <summary>Retries a pending save, resuming a planned provider call once without repeating a completed mutation.</summary>
@@ -195,9 +195,9 @@ public sealed class LicenseManager : IDisposable
         }
         bool blocked;
         lock (gate) { blocked = restorationBlocked; }
-        if (blocked && !Read(Send("snapshot")).State.HasPendingPersistence) Reload();
+        if (blocked && !Read(Send(new("snapshot"))).State.HasPendingPersistence) Reload();
         cancellationToken.ThrowIfCancellationRequested();
-        var start = Send("retryPersistence");
+        var start = Send(new("retryPersistence"));
         await DriveAsync(start, cancellationToken).ConfigureAwait(false);
         lock (gate) { restorationBlocked = false; InitialRestoreError = null; }
     }
@@ -207,7 +207,7 @@ public sealed class LicenseManager : IDisposable
         token.ThrowIfCancellationRequested();
         await ResumeCompletionAsync(token).ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
-        if (Read(Send("snapshot")).State.HasPendingPersistence)
+        if (Read(Send(new("snapshot"))).State.HasPendingPersistence)
             await RetryPersistenceAsync(token).ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
         bool blocked;
@@ -219,12 +219,8 @@ public sealed class LicenseManager : IDisposable
     {
         lock (gate) { if (restorationBlocked) throw new LicenseException(LicenseErrorCode.StorageFailure); }
     }
-    private sealed record Reply(LicenseState State, LicenseRefreshOutcome? Outcome, LicenseFailure? Error, bool NeedsRefresh);
-    private static Reply Read(JsonElement element)
+    private static SessionReply Read(SessionReply reply)
     {
-        Reply reply;
-        try { reply = element.Deserialize<Reply>(Native.Json) ?? throw new JsonException(); }
-        catch (JsonException) { throw new LicenseException(LicenseErrorCode.UnexpectedProviderResponse); }
         if (reply.Error is { } error)
         {
             if (error.Code == LicenseErrorCode.Cancelled) throw new OperationCanceledException();
@@ -232,18 +228,16 @@ public sealed class LicenseManager : IDisposable
         }
         return reply;
     }
-    private JsonElement Send(string command, params (string, object?)[] values)
+    private SessionReply Send(SessionCommand input)
     {
         // The host clock may re-enter or marshal to another thread.
         var now = Now;
-        lock (gate) { return SendAt(command, now, values); }
+        lock (gate) { return SendAt(input with { Now = now }); }
     }
     // Caller holds gate; no host callbacks or synchronous observer continuations run here.
-    private JsonElement SendAt(string command, double? now, params (string, object?)[] values)
+    private SessionReply SendAt(SessionCommand input)
     {
-        RequireDispatch(allowDuringRestore: command is "snapshot" or "needsRefresh" or "completeEffect");
-        var input = new Dictionary<string, object?> { ["command"] = command, ["now"] = now };
-        foreach (var (name, value) in values) if (value is not null) input[name] = value;
+        RequireDispatch(allowDuringRestore: input.Command is "snapshot" or "needsRefresh" or "completeEffect");
         return Observe(Native.Call(session, input));
     }
     private void RequireDispatch(bool allowDuringRestore = false)
@@ -252,9 +246,9 @@ public sealed class LicenseManager : IDisposable
         // Reads and outstanding receipts still belong to the committed session.
         if (restoring && !allowDuringRestore) throw new LicenseException(LicenseErrorCode.OperationInProgress);
     }
-    private JsonElement Observe(JsonElement reply)
+    private SessionReply Observe(SessionReply reply)
     {
-        Publish(reply.GetProperty("state").Deserialize<LicenseState>(Native.Json)!);
+        Publish(reply.State);
         return reply;
     }
     private void Publish(LicenseState state)
@@ -271,7 +265,7 @@ public sealed class LicenseManager : IDisposable
         }
     }
     private static LicenseState RestoreEmptySession(SessionHandle session)
-        => Read(Native.Call(session, new { command = "restore", policy = LicenseRefreshPolicy.Never, now = 0 })).State;
+        => Read(Native.Call(session, new("restore", 0, Policy: LicenseRefreshPolicy.Never))).State;
 
     private void Restore(bool readStorage, bool requireIdle = false)
     {
@@ -301,7 +295,7 @@ public sealed class LicenseManager : IDisposable
                 // which can advance the observed time in the live session.
                 if (requireIdle) CheckReload(restoredAt);
                 // Loading and schema upgrades have no effects.
-                var reply = Read(Native.Call(candidate, new { command = "restore", policy, now = restoredAt }));
+                var reply = Read(Native.Call(candidate, new("restore", restoredAt, Policy: policy)));
                 session.Dispose();
                 session = candidate;
                 candidate = null;
@@ -318,7 +312,7 @@ public sealed class LicenseManager : IDisposable
     }
 
     // Caller holds gate. Rust checks the operation lease and observed time.
-    private Reply CheckReload(double now) => Read(Native.Call(session, new { command = "checkReload", now }));
+    private SessionReply CheckReload(double now) => Read(Native.Call(session, new("checkReload", now)));
 
     private double ReadRestoreTime()
     {
@@ -326,13 +320,13 @@ public sealed class LicenseManager : IDisposable
         catch { throw new LicenseException(LicenseErrorCode.InvalidData); }
     }
 
-    private JsonElement CompleteSave(ulong id, bool success)
+    private SessionReply CompleteSave(ulong id, bool success)
     {
         // A reentrant clock observes an outstanding effect until this receipt is submitted.
         var now = ReadObservationTime();
-        lock (gate) { return SendAt("completeEffect", now, ("id", id), ("completion", new { kind = "persisted", success })); }
+        lock (gate) { return SendAt(new("completeEffect", now, Id: id, Completion: new("persisted", Success: success))); }
     }
-    private JsonElement CompleteProvider(ulong id, object result)
+    private SessionReply CompleteProvider(ulong id, ProviderResult result)
     {
         var now = ReadObservationTime();
         lock (gate)
@@ -355,36 +349,33 @@ public sealed class LicenseManager : IDisposable
         {
             token.ThrowIfCancellationRequested();
             var now = ReadObservationTime();
-            JsonElement reply;
-            lock (gate) { reply = SendAt("resumeCompletion", now, ("cancelled", token.IsCancellationRequested)); }
+            SessionReply reply;
+            lock (gate) { reply = SendAt(new("resumeCompletion", now, Cancelled: token.IsCancellationRequested)); }
             await DriveAsync(reply, token).ConfigureAwait(false);
             return true;
         }
         finally { lock (gate) { resumingCompletion = false; } }
     }
-    private JsonElement Persist(JsonElement reply)
+    private SessionReply Persist(SessionReply reply)
     {
-        while (reply.TryGetProperty("effect", out var effect) && effect.ValueKind != JsonValueKind.Null && effect.GetProperty("kind").GetString() == "persist")
+        while (reply.Effect is { Kind: "persist", Id: var id })
         {
-            var id = effect.GetProperty("id").GetUInt64();
             var success = true;
-            try { storage.Save(JsonSerializer.SerializeToUtf8Bytes(effect.GetProperty("record"))); }
+            try { storage.Save(reply.PersistenceRecord!); }
             catch { success = false; }
             reply = CompleteSave(id, success);
         }
         return reply;
     }
-    private async Task<Reply> DriveAsync(JsonElement reply, CancellationToken token)
+    private async Task<SessionReply> DriveAsync(SessionReply reply, CancellationToken token)
     {
         while (true)
         {
             // Rust's outstanding receipt rejects reentrant retries while Save runs.
             reply = Persist(reply);
             var state = Read(reply);
-            if (!reply.TryGetProperty("effect", out var effect) || effect.ValueKind == JsonValueKind.Null) return state;
-            var id = effect.GetProperty("id").GetUInt64();
-            var operation = effect.GetProperty("operation").GetString();
-            object result;
+            if (reply.Effect is not { Id: var id, Operation: var operation } effect) return state;
+            ProviderResult result;
             var providerEntered = false;
             try
             {
@@ -392,23 +383,20 @@ public sealed class LicenseManager : IDisposable
                 switch (operation)
                 {
                     case "activate":
-                        var key = effect.GetProperty("licenseKey").ValueKind == JsonValueKind.Null ? null : effect.GetProperty("licenseKey").GetString();
                         providerEntered = true;
-                        var activation = await provider.ActivateAsync(new(key), token).ConfigureAwait(false);
-                        result = new { kind = "activated", activation };
+                        var activation = await provider.ActivateAsync(new(effect.LicenseKey), token).ConfigureAwait(false);
+                        result = new("activated", Activation: activation);
                         break;
                     case "validate":
-                        var validationActivation = effect.GetProperty("activation").Deserialize<LicenseActivation>(Native.Json)!;
                         providerEntered = true;
-                        var validation = await provider.ValidateAsync(validationActivation, token).ConfigureAwait(false);
+                        var validation = await provider.ValidateAsync(effect.Activation!, token).ConfigureAwait(false);
                         token.ThrowIfCancellationRequested();
-                        result = new { kind = "validated", validation };
+                        result = new("validated", Validation: validation);
                         break;
                     case "deactivate":
-                        var releaseActivation = effect.GetProperty("activation").Deserialize<LicenseActivation>(Native.Json)!;
                         providerEntered = true;
-                        await provider.DeactivateAsync(releaseActivation, token).ConfigureAwait(false);
-                        result = new { kind = "deactivated" };
+                        await provider.DeactivateAsync(effect.Activation!, token).ConfigureAwait(false);
+                        result = new("deactivated");
                         break;
                     default: throw new LicenseException(LicenseErrorCode.UnexpectedProviderResponse);
                 }
@@ -416,14 +404,10 @@ public sealed class LicenseManager : IDisposable
             catch (Exception e) when (e is OperationCanceledException ||
                 (operation == "validate" && token.IsCancellationRequested))
             {
-                result = new
-                {
-                    kind = "failed",
-                    failure = new LicenseFailure(LicenseErrorCode.Cancelled,
-                    MutationOutcome: providerEntered ? null : LicenseMutationOutcome.NotApplied)
-                };
+                result = new("failed", Failure: new LicenseFailure(LicenseErrorCode.Cancelled,
+                    MutationOutcome: providerEntered ? null : LicenseMutationOutcome.NotApplied));
             }
-            catch (Exception e) { result = new { kind = "failed", failure = (e as LicenseException)?.Failure ?? new(LicenseErrorCode.TransportFailure) }; }
+            catch (Exception e) { result = new("failed", Failure: (e as LicenseException)?.Failure ?? new(LicenseErrorCode.TransportFailure)); }
             reply = CompleteProvider(id, result);
         }
     }

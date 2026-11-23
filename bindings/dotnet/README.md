@@ -71,8 +71,15 @@ isolated NuGet consumer. The package and receipt are retained together under
 When `VM_RUNNER_ARTIFACTS_DIR` is supplied, the same files are also retained there
 under `win-x64/<version>/`.
 The receipt records the SDK and shared build helper hashes. The GitHub-hosted
-distribution job runs on x64. On Windows ARM64, run the local command to verify x64
-emulation.
+distribution job runs on x64 and publishes the isolated consumer with Native AOT
+from the same audited package. It runs activation, persistence and reopen,
+refresh, and deactivation with JSON reflection disabled, using both in-memory
+storage and temporary current-user DPAPI storage. The receipt records a successful
+run in `nativeAotFixtureExecuted`.
+
+On an owned x64 Windows worker with the Visual Studio C++ workload, append
+`--native-aot` to the acceptance command to run the same check. On Windows ARM64,
+run the standard command to verify x64 emulation.
 
 ### macOS checks
 

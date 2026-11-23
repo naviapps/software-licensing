@@ -71,39 +71,41 @@ string[] outcomeNames = ["validated", "gracePeriod", "expired", "invalid", "deac
     "skippedActivationInProgress", "skippedRefreshInProgress", "skippedDeactivationInProgress",
     "skippedNoActivation", "skippedRefreshDisabled", "skippedNotDue"];
 var outcomes = Enum.GetValues<LicenseRefreshOutcome>();
+Check(!JsonSerializer.IsReflectionEnabledByDefault);
 Check(outcomes.Length == outcomeNames.Length);
 for (int i = 0; i < outcomes.Length; i++)
 {
-    var encoded = JsonSerializer.Serialize(outcomes[i], Native.Json);
-    Check(encoded == JsonSerializer.Serialize(outcomeNames[i]));
-    Check(JsonSerializer.Deserialize<LicenseRefreshOutcome>(encoded, Native.Json) == outcomes[i]);
+    var encoded = JsonSerializer.Serialize(outcomes[i], LicensingJson.Type<LicenseRefreshOutcome>());
+    Check(encoded == JsonSerializer.Serialize(outcomeNames[i], LicensingJson.Type<string>()));
+    Check(JsonSerializer.Deserialize(encoded, LicensingJson.Type<LicenseRefreshOutcome>()) == outcomes[i]);
 }
 foreach (var invalid in new[] { "\"futureOutcome\"", "\"refreshed\"", "0", "\"0\"" })
 {
-    try { JsonSerializer.Deserialize<LicenseRefreshOutcome>(invalid, Native.Json); throw new System.Diagnostics.UnreachableException("Unknown outcome accepted."); }
+    try { JsonSerializer.Deserialize(invalid, LicensingJson.Type<LicenseRefreshOutcome>()); throw new System.Diagnostics.UnreachableException("Unknown outcome accepted."); }
     catch (JsonException) { }
 }
-Native.RequireAbi(5);
-foreach (var oldAbi in new uint[] { 1, 2, 3, 4 })
+Native.RequireAbi(6);
+foreach (var oldAbi in new uint[] { 1, 2, 3, 4, 5 })
 {
     try { Native.RequireAbi(oldAbi); throw new System.Diagnostics.UnreachableException("Old ABI accepted."); }
     catch (LicenseException error) { Check(error.Failure.Code == LicenseErrorCode.IncompatibleAbiVersion); }
 }
-Check(JsonSerializer.Deserialize<LicenseFailure>("""{"code":"unsupportedVersion"}""", Native.Json)?.Code == LicenseErrorCode.UnsupportedVersion);
-Check(JsonSerializer.Serialize(new LicenseFailure(LicenseErrorCode.IncompatibleAbiVersion), Native.Json) == """{"code":"incompatibleAbiVersion"}""");
+var failureType = LicensingJson.Type<LicenseFailure>();
+Check(JsonSerializer.Deserialize("""{"code":"unsupportedVersion"}""", failureType)?.Code == LicenseErrorCode.UnsupportedVersion);
+Check(JsonSerializer.Serialize(new LicenseFailure(LicenseErrorCode.IncompatibleAbiVersion), failureType) == """{"code":"incompatibleAbiVersion"}""");
 var fullFailure = new LicenseFailure(LicenseErrorCode.Cancelled, 429, ulong.MaxValue, LicenseMutationOutcome.NotApplied);
-var fullFailureJson = JsonSerializer.Serialize(fullFailure, Native.Json);
-Check(JsonSerializer.Deserialize<LicenseFailure>(fullFailureJson, Native.Json) == fullFailure);
+var fullFailureJson = JsonSerializer.Serialize(fullFailure, failureType);
+Check(JsonSerializer.Deserialize(fullFailureJson, failureType) == fullFailure);
 using (var wire = JsonDocument.Parse(fullFailureJson))
 {
     Check(wire.RootElement.GetProperty("mutationOutcome").GetString() == "notApplied");
     Check(wire.RootElement.GetProperty("retryAfterSeconds").GetUInt64() == ulong.MaxValue);
 }
-Check(JsonSerializer.Deserialize<LicenseFailure>("""{"code":"mutationOutcomeUnknown","mutationOutcome":"unknown"}""", Native.Json)
+Check(JsonSerializer.Deserialize("""{"code":"mutationOutcomeUnknown","mutationOutcome":"unknown"}""", failureType)
     == new LicenseFailure(LicenseErrorCode.MutationOutcomeUnknown, MutationOutcome: LicenseMutationOutcome.Unknown));
-Check(JsonSerializer.Deserialize<LicenseFailure>("""{"code":"activationPending"}""", Native.Json)
+Check(JsonSerializer.Deserialize("""{"code":"activationPending"}""", failureType)
     == new LicenseFailure(LicenseErrorCode.ActivationPending));
-try { JsonSerializer.Deserialize<LicenseMutationOutcome>("\"applied\"", Native.Json); throw new System.Diagnostics.UnreachableException("Unknown mutation accepted."); }
+try { JsonSerializer.Deserialize("\"applied\"", LicensingJson.Type<LicenseMutationOutcome>()); throw new System.Diagnostics.UnreachableException("Unknown mutation accepted."); }
 catch (JsonException) { }
 if (args.Contains("--managed-only"))
 {
@@ -111,6 +113,19 @@ if (args.Contains("--managed-only"))
     return;
 }
 var clock = () => DateTimeOffset.FromUnixTimeSeconds(2000);
+{
+    var journal = new MemoryStorage { FailOnSave = 1 };
+    var activation = new LicenseActivation("test", "café", clock());
+    using (var manager = new LicenseManager(new Provider(false), journal, clock: clock))
+    {
+        ExpectCode(() => manager.AdoptExternallyVerifiedActivation(activation), LicenseErrorCode.StorageFailure);
+        await manager.RetryPersistenceAsync();
+        Check(manager.State.Plan.Identifier == "café" && journal.SaveCount == 2);
+        Check(journal.Data.AsSpan().IndexOf("café"u8) >= 0);
+    }
+    using var restored = new LicenseManager(new Provider(false), journal, clock: clock);
+    Check(restored.InitialRestoreError is null && restored.Plan.Identifier == "café");
+}
 {
     var now = clock();
     Check(LicenseSource.NormalizeIdentifier(" fixture ") == "fixture");
@@ -235,7 +250,7 @@ using (var manager = new LicenseManager(new Provider(true), storage, clock: cloc
     catch (LicenseException e) { Check(e.Failure.Code == LicenseErrorCode.MutationOutcomeUnknown); }
     Check(manager.State.LastOperationFailure?.Code == LicenseErrorCode.TransportFailure);
     Check(manager.State.HasPendingDeactivation && !manager.State.Plan.IsLicensed);
-    Check(!JsonSerializer.Serialize(manager.State).Contains("TEST-KEY"));
+    Check(!JsonSerializer.Serialize(manager.State, LicensingJson.Type<LicenseState>()).Contains("TEST-KEY"));
 }
 using (var restored = new LicenseManager(new Provider(false), storage, clock: clock))
 {
@@ -481,7 +496,7 @@ await using (var states = observed.WatchStatesAsync().GetAsyncEnumerator())
     Check(await states.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
     Check(!states.Current.IsRefreshing && states.Current.Status == LicenseStatus.GracePeriod);
     Check(states.Current.NextTransitionAt == DateTimeOffset.FromUnixTimeSeconds(2100));
-    Check(!JsonSerializer.Serialize(states.Current).Contains("PRIVATE-KEY"));
+    Check(!JsonSerializer.Serialize(states.Current, LicensingJson.Type<LicenseState>()).Contains("PRIVATE-KEY"));
     observed.Dispose();
     Check(!await states.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
 }
@@ -552,6 +567,8 @@ if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 26100))
         secure.Save(bytes);
         Check(JsonElement.DeepEquals(JsonDocument.Parse(secure.Load()!).RootElement, JsonDocument.Parse(bytes).RootElement));
         Check(!Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(directory, "license.dpapi"))).Contains("FIXTURE-KEY"));
+        ExpectCode(() => secure.Save("{"u8.ToArray()), LicenseErrorCode.InvalidData);
+        ExpectCode(() => secure.Save("null"u8.ToArray()), LicenseErrorCode.InvalidData);
         try { new WindowsLicenseStorage(directory, "another.namespace").Load(); throw new System.Diagnostics.UnreachableException("Expected namespace mismatch"); }
         catch (LicenseException e) { Check(e.Failure.Code == LicenseErrorCode.StorageFailure); }
         Check(JsonElement.DeepEquals(JsonDocument.Parse(secure.Load()!).RootElement, JsonDocument.Parse(bytes).RootElement));

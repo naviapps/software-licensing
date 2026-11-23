@@ -60,17 +60,20 @@ def artifacts():
 
 class WindowsOutputTests(unittest.TestCase):
     def test_redirected_x64_build_uses_one_native_candidate_for_all_fixtures(self):
-        for host, stale, retain in (
-            ("arm64", False, False),
-            ("arm64", True, False),
-            ("arm64", False, True),
-            ("x64", False, True),
+        for host, stale, retain, native_aot in (
+            ("arm64", False, False, False),
+            ("arm64", True, False, False),
+            ("arm64", False, True, False),
+            ("x64", False, True, False),
+            ("x64", False, True, True),
         ):
             with (
-                self.subTest(host=host, stale_legacy_output=stale, retain_package=retain),
+                self.subTest(host=host, stale=stale, retain=retain, native_aot=native_aot),
                 tempfile.TemporaryDirectory() as temporary,
             ):
-                self.exercise_driver(Path(temporary), host=host, stale=stale, retain=retain)
+                self.exercise_driver(
+                    Path(temporary), host=host, stale=stale, retain=retain, native_aot=native_aot
+                )
 
     def test_rejects_changed_candidate_before_publishing(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -96,7 +99,15 @@ class WindowsOutputTests(unittest.TestCase):
                     driver.acceptance_source()
 
     def exercise_driver(
-        self, root, *, host="arm64", stale=False, retain=False, mutate=False, change_tools=False
+        self,
+        root,
+        *,
+        host="arm64",
+        stale=False,
+        retain=False,
+        mutate=False,
+        change_tools=False,
+        native_aot=False,
     ):
         driver = load_driver()
         fixture = root / "fixtures/consumers/dotnet/Program.cs"
@@ -231,7 +242,7 @@ class WindowsOutputTests(unittest.TestCase):
                     driver.main([])
                 self.assertFalse((output / driver.RID).exists())
                 return
-            driver.main([])
+            driver.main(["--native-aot"] if native_aot else [])
 
         expected_environment = dict(environment)
         expected_environment.pop("Dotnet_Host_Path")
@@ -276,12 +287,21 @@ class WindowsOutputTests(unittest.TestCase):
         fixture_call = nuget.run_isolated_consumer.call_args.kwargs
         self.assertEqual(fixture_call["runtime"], "win-x64")
         self.assertEqual(fixture_call["source"], fixture.read_text())
+        self.assertEqual(fixture_call["native_aot"], native_aot)
+        self.assertEqual(fixture_call["properties"]["TreatWarningsAsErrors"], "true")
+        if native_aot:
+            self.assertEqual(fixture_call["properties"]["DefineConstants"], "NATIVE_AOT_FIXTURE")
+            self.assertEqual(fixture_call["properties"]["ILLinkTreatWarningsAsErrors"], "true")
+            self.assertEqual(
+                fixture_call["properties"]["JsonSerializerIsReflectionEnabledByDefault"], "false"
+            )
         self.assertIn(built, fixture_call["exclude_paths"])
         self.assertIn(candidate, fixture_call["exclude_paths"])
         self.assertFalse(fixture_call.get("clear_environment"))
 
         local = output / driver.RID / native.version
         retained = json.loads((local / driver.RECEIPT).read_bytes())
+        self.assertEqual(retained.get("nativeAotFixtureExecuted"), True if native_aot else None)
         self.assertEqual((retained["source"], retained["workspaceFingerprint"]), source)
         execution = "x64-native" if host == "x64" else "x64-emulated-on-arm64"
         self.assertEqual(retained["execution"], execution)

@@ -25,7 +25,7 @@ fn stored_record_decoding_reserves_json_null_for_absence() {
 
 #[cfg(windows)]
 #[test]
-fn windows_ffi_load_preserves_raw_dpapi_null_as_an_invalid_record() {
+fn windows_ffi_storage_preserves_original_record_bytes_and_rejects_null() {
     use software_licensing_windows::WindowsLicenseStorage;
     use std::{
         fs,
@@ -52,14 +52,18 @@ fn windows_ffi_load_preserves_raw_dpapi_null_as_an_invalid_record() {
     let directory = OwnedDirectory(temp);
     let namespace = "com.example.software-licensing.ffi-fixture";
     let storage = WindowsLicenseStorage::new(&directory.0, namespace).unwrap();
-    let input = serde_json::to_vec(&json!({
-        "directory": directory.0.to_str().unwrap(),
-        "namespace": namespace,
-        "operation": "load",
-    }))
-    .unwrap();
-    let load = || {
-        let owner = unsafe { software_licensing_windows_storage(input.as_ptr(), input.len()) };
+    let dispatch = |operation: &str, record: Option<&[u8]>| {
+        let input = serde_json::to_vec(&json!({
+            "directory": directory.0.to_str().unwrap(),
+            "namespace": namespace,
+            "operation": operation,
+        }))
+        .unwrap();
+        let (data, length) =
+            record.map_or((std::ptr::null(), 0), |bytes| (bytes.as_ptr(), bytes.len()));
+        let owner = unsafe {
+            software_licensing_windows_storage(input.as_ptr(), input.len(), data, length)
+        };
         let view = unsafe { software_licensing_json_view(owner) };
         let json = serde_json::from_slice::<Value>(unsafe {
             std::slice::from_raw_parts(view.data, view.length)
@@ -67,6 +71,7 @@ fn windows_ffi_load_preserves_raw_dpapi_null_as_an_invalid_record() {
         unsafe { software_licensing_json_destroy(owner) };
         (view.code, json.unwrap())
     };
+    let load = || dispatch("load", None);
 
     assert_eq!(load(), (0, Value::Null));
     let raw = b" \nnull\t";
@@ -77,8 +82,27 @@ fn windows_ffi_load_preserves_raw_dpapi_null_as_an_invalid_record() {
     assert_eq!(fs::read(target).unwrap(), encrypted);
     assert_eq!(storage.load().unwrap().as_deref(), Some(raw.as_slice()));
 
-    storage.save(br#"{"version":2}"#).unwrap();
+    let supplied = b"{ \"version\": 2 }\r\n";
+    assert_eq!(dispatch("save", Some(supplied)), (0, Value::Null));
+    assert_eq!(
+        storage.load().unwrap().as_deref(),
+        Some(supplied.as_slice())
+    );
+    for invalid in [b"null".as_slice(), b"", b"{"] {
+        assert_eq!(
+            dispatch("save", Some(invalid)),
+            (1, json!({"code": "invalidData"}))
+        );
+    }
+    assert_eq!(
+        dispatch("delete", Some(supplied)),
+        (1, json!({"code": "invalidData"}))
+    );
+    assert_eq!(
+        storage.load().unwrap().as_deref(),
+        Some(supplied.as_slice())
+    );
     assert_eq!(load(), (0, json!({"version": 2})));
-    storage.delete().unwrap();
+    assert_eq!(dispatch("delete", None), (0, Value::Null));
     assert_eq!(load(), (0, Value::Null));
 }

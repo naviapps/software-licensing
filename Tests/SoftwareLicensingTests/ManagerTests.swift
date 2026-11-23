@@ -81,12 +81,7 @@ private final class ValidationClock: Sendable {
 
   func dispatch(_ command: Data) throws -> Data {
     let command = try #require(JSONSerialization.jsonObject(with: command) as? [String: Any])
-    let reply = try core.dispatch(command)
-    var object = try #require(JSONSerialization.jsonObject(with: reply) as? [String: Any])
-    guard let effect = object["effect"] as? [String: Any], effect["kind"] as? String == "provider"
-    else { return reply }
-    object["effect"] = ["kind": "provider", "id": try #require(effect["id"])]
-    return try JSONSerialization.data(withJSONObject: object)
+    return try driverJSON(core.dispatch(command))
   }
 
   func stageStoredRecord(_ record: Data) throws { try core.stageStoredRecord(record) }
@@ -99,16 +94,31 @@ private final class ValidationClock: Sendable {
   func completeProviderEffect(_ id: UInt64, now: TimeInterval?, cancelled: Bool) throws -> Data {
     completions.append(id)
     completionWasCancelled = cancelled
-    return try core.completeProvider(
-      id, result: ["kind": "activated", "activation": LicensingNative.object(activation)], now: now)
+    return try driverJSON(
+      core.completeProvider(
+        id, result: ["kind": "activated", "activation": LicensingNative.object(activation)],
+        now: now))
   }
 
   func completePersistence(_ id: UInt64, success: Bool, now: TimeInterval?) throws -> Data {
-    try core.completePersistence(id, success: success, now: now)
+    try driverJSON(core.completePersistence(id, success: success, now: now))
   }
 
   func resumeCompletion(now: TimeInterval?, cancelled: Bool) throws -> Data {
-    try core.resumeCompletion(now: now, cancelled: cancelled)
+    try driverJSON(core.resumeCompletion(now: now, cancelled: cancelled))
+  }
+
+  private func driverJSON(_ reply: RawLicenseReply) throws -> Data {
+    var object = try #require(JSONSerialization.jsonObject(with: reply.json) as? [String: Any])
+    guard var effect = object["effect"] as? [String: Any] else { return reply.json }
+    if effect["kind"] as? String == "provider" {
+      effect = ["kind": "provider", "id": try #require(effect["id"])]
+    } else if let record = reply.record {
+      // The custom driver contract still uses an embedded record in Reply JSON.
+      effect["record"] = try JSONSerialization.jsonObject(with: record)
+    }
+    object["effect"] = effect
+    return try JSONSerialization.data(withJSONObject: object)
   }
 }
 
@@ -1177,8 +1187,8 @@ func callbackCancellationCannotGrantAccessOrLeavePendingActivation(_ returnsLate
       try JSONDecoder().decode(LicenseRefreshOutcome.self, from: Data(value.utf8))
     }
   }
-  try LicensingNative.requireABI(5)
-  for oldABI in [UInt32(1), 2, 3, 4] {
+  try LicensingNative.requireABI(6)
+  for oldABI in [UInt32(1), 2, 3, 4, 5] {
     #expect(throws: LicenseError(.incompatibleABIVersion)) {
       try LicensingNative.requireABI(oldABI)
     }
@@ -1241,6 +1251,30 @@ func callbackCancellationCannotGrantAccessOrLeavePendingActivation(_ returnsLate
   try await manager.retryPersistence()
   #expect(provider.activationCount == 1 && storage.saveCount == 3)
   #expect(manager.state.isLicensed && !manager.state.hasPendingActivation)
+}
+
+@Test @MainActor func activationJournalStoresTheRustRecordBytesVerbatim() async throws {
+  let clock = ValidationClock()
+  let session = LicenseSession()
+  _ = try session.dispatch([
+    "command": "restore", "policy": LicensingNative.object(LicenseRefreshPolicy.never),
+    "now": clock.read().timeIntervalSince1970,
+  ])
+  let journal = try session.dispatch([
+    "command": "activate", "licenseKey": "TEST-KEY", "now": clock.read().timeIntervalSince1970,
+  ])
+  let record = try #require(journal.record)
+  let object = try #require(JSONSerialization.jsonObject(with: journal.json) as? [String: Any])
+  let effect = try #require(object["effect"] as? [String: Any])
+  #expect(effect["kind"] as? String == "persist" && effect["record"] == nil)
+
+  let storage = MemoryStorage()
+  let provider = ReleaseProvider()
+  provider.onActivation = { #expect(storage.data == record) }
+  let manager = try LicenseManager(
+    provider: provider, storage: storage, refreshPolicy: .never, clock: clock.read)
+  try await manager.activate(.licenseKey("TEST-KEY"))
+  #expect(manager.state.isLicensed && storage.saveCount == 2)
 }
 
 @Test @MainActor func cancellationAfterActivationJournalClearsIntentWithoutEnteringProvider()

@@ -11,13 +11,9 @@ public sealed class WindowsLicenseStorage(string directory, string @namespace) :
 {
     public byte[]? Load()
     {
-        var record = Native.Storage(new { operation = "load", directory, @namespace });
-        return record.ValueKind == JsonValueKind.Null ? null : JsonSerializer.SerializeToUtf8Bytes(record);
+        var record = Native.Storage(new("load", directory, @namespace));
+        return record.ValueKind == JsonValueKind.Null ? null : JsonSerializer.SerializeToUtf8Bytes(record, LicensingJson.Type<JsonElement>());
     }
-    public void Save(byte[] record)
-    {
-        using var document = JsonDocument.Parse(record);
-        Native.Storage(new { operation = "save", directory, @namespace, record = document.RootElement });
-    }
-    public void Delete() => Native.Storage(new { operation = "delete", directory, @namespace });
+    public void Save(byte[] record) => Native.Storage(new("save", directory, @namespace), record);
+    public void Delete() => Native.Storage(new("delete", directory, @namespace));
 }

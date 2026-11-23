@@ -226,7 +226,7 @@ or retry persistence to restore the saved record.
 State and refresh-eligibility reads continue observing the committed session while
 reload loads storage. Other mutations remain excluded until the replacement is ready.
 
-Rust/C ABI is **5**, independently of the storage schema. An ABI mismatch reports
+Rust/C ABI is **6**, independently of the storage schema. An ABI mismatch reports
 `incompatibleABIVersion` / `IncompatibleAbiVersion` before reading storage.
 Ship matching Rust/C, Swift/.NET bindings and native artifacts together.
 `unsupportedVersion` denotes a persisted-record version error only; existing
@@ -237,9 +237,10 @@ load and save operations. Return the stored bytes directly. Only an absent
 value denotes an empty store. Rust decodes present bytes before the host samples
 the restore time. It rejects a present empty value, malformed JSON, JSON null
 and other scalar values as storage failures. Both bindings read UTF-8
-(including a byte-order mark), UTF-16 and UTF-32 JSON from custom stores and
-write UTF-8. The .NET binding now accepts the additional encodings supported
-by Swift. The 1 MiB custom-storage limit applies to the compact UTF-8 record,
+(including a byte-order mark), UTF-16 and UTF-32 JSON from custom stores.
+The SDK's own sessions pass Rust-generated UTF-8 directly to storage.
+Windows DPAPI storage validates and encrypts the exact supplied UTF-8 bytes.
+The 1 MiB custom-storage limit applies to the compact UTF-8 record,
 so formatting whitespace does not count. Keychain and DPAPI storage apply
 their existing 1 MiB limit to plaintext record bytes.
 Deactivation saves its recovery state. `KeychainLicenseStorage.delete()` and
@@ -271,10 +272,10 @@ first step of deactivation, it then resumes that already-planned release. Same-k
 validates the saved instance; replacing a different key requires deactivation.
 A retry while a write awaits completion fails with `operationInProgress`. Each
 write attempt has its own opaque effect ID, including retries and the writes before
-and after provider release. Rust/C effect drivers must save each emitted candidate
-once, then acknowledge that exact ID once with `persisted`; only a failed attempt
-can be retried. Late or repeated acknowledgements cannot commit a candidate or
-advance a later operation. Swift and .NET managers handle these receipts internally.
+and after provider release. Save each emitted candidate once, then acknowledge
+that exact ID once with `persisted`. Only a failed attempt can be retried. Late
+or repeated acknowledgements cannot commit a candidate or advance a later
+operation. Swift and .NET managers handle these receipts internally.
 If the final write after a successful release fails, retrying it in the same manager
 does not call the provider again. After a restart, only the saved pending-release
 marker remains, so recovery must ask the provider to release that instance again.
@@ -371,8 +372,12 @@ software-licensing = { git = "https://github.com/naviapps/software-licensing.git
 Replace the placeholder with the commit you selected. Import `software_licensing`
 and keep your own `Cargo.lock`. A Windows Rust host can also select
 `software-licensing-windows` at the same URL and revision for DPAPI storage.
-The core `Session` returns effects for the caller to execute; it does not
-perform storage or provider I/O itself.
+The core `Session` returns effects for the caller to execute. A Rust bridge can
+use `Reply::into_wire_parts()` to get session metadata and a separate persistence
+record. C callers read the `persist` receipt ID with `software_licensing_json_view`
+and copy the record from `software_licensing_json_persistence_record` before
+destroying the result owner. Write those UTF-8 bytes atomically before sending
+the receipt back to the session.
 
 For C on macOS, copy the universal `CSoftwareLicensing.framework` from the
 `macos-arm64_x86_64` slice under `Artifacts/CSoftwareLicensing.xcframework`

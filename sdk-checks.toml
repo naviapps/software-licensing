@@ -9,3 +9,7 @@ rust_packages = ["software-licensing"]
 [rust_c.c]
 framework = "Artifacts/CSoftwareLicensing.xcframework/macos-arm64_x86_64/CSoftwareLicensing.framework"
 header = "software_licensing.h"
+
+[windows_bindings]
+packages = ["software-licensing-ffi"]
+projects = ["bindings/dotnet/tests/SoftwareLicensing.Tests/SoftwareLicensing.Tests.csproj"]

@@ -9,6 +9,8 @@
 static void success(SoftwareLicensingJson *value) {
     SoftwareLicensingJsonView view = software_licensing_json_view(value);
     assert(view.code == 0 && view.data && view.length);
+    size_t length = SIZE_MAX;
+    assert(!software_licensing_json_persistence_record(value, &length) && length == 0);
     software_licensing_json_destroy(value);
 }
 static SoftwareLicensingJson *dispatch(SoftwareLicensingSession *session, const char *command) {
@@ -43,6 +45,8 @@ static void rejected_receipt(SoftwareLicensingJson *value) {
 int main(void) {
     assert(software_licensing_abi_version() == SOFTWARE_LICENSING_ABI_VERSION);
     assert(software_licensing_session_has_completion(NULL) == 0);
+    size_t length = SIZE_MAX;
+    assert(!software_licensing_json_persistence_record(NULL, &length) && length == 0);
     software_licensing_json_destroy(NULL);
     software_licensing_session_destroy(NULL);
     SoftwareLicensingJson *invalid = software_licensing_session_dispatch(NULL, NULL, 0);
@@ -96,12 +100,20 @@ int main(void) {
         software_licensing_session_dispatch(session, (const uint8_t *)apply, strlen(apply));
     SoftwareLicensingJsonView view = software_licensing_json_view(pending);
     assert(view.code == 0 && view.length > 0);
+    char metadata[4096];
+    copy_json(pending, metadata, sizeof(metadata));
+    assert(!strstr(metadata, "\"record\":"));
+    assert(!strstr(metadata, "FIXTURE-KEY"));
+    const uint8_t *bytes = software_licensing_json_persistence_record(pending, &length);
+    assert(bytes && length > 0);
+    assert(bytes == software_licensing_json_persistence_record(pending, NULL));
     uint64_t receipt_id = effect_id(pending);
     /* A borrowed view remains valid across calls until its own owner is destroyed. */
     const char *snapshot = "{\"command\":\"snapshot\",\"now\":1000}";
     success(
         software_licensing_session_dispatch(session, (const uint8_t *)snapshot, strlen(snapshot)));
     assert(view.data[0] == '{');
+    assert(bytes[0] == '{' && bytes[length - 1] == '}');
     software_licensing_json_destroy(pending);
     char receipt[256];
     snprintf(receipt, sizeof(receipt),
