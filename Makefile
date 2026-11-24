@@ -4,19 +4,25 @@ DOTNET_BIN ?= dotnet
 FRAMEWORK_DIR := $(CURDIR)/Artifacts/CSoftwareLicensing.xcframework/macos-arm64_x86_64
 
 .DEFAULT_GOAL := check
-.PHONY: check check-source test-managed check-distribution native native-verify lint test test-rust test-distribution-tools test-dotnet test-c test-consumer test-installed-consumers format clean
+.PHONY: check check-source test-managed check-distribution native native-verify check-header generate-header lint test test-rust test-distribution-tools test-dotnet test-c test-consumer test-installed-consumers format clean
 
 check: check-source test test-consumer
 
-check-source: lint test-rust test-managed
+check-source: lint check-header test-rust test-managed
 
 check-distribution: test-distribution-tools native-verify test-dotnet test-c
 
-native:
+native: generate-header
 	$(SDK_TOOLING) xcframework
 
-native-verify:
+native-verify: check-header
 	$(SDK_TOOLING) xcframework --verify
+
+check-header:
+	$(SDK_TOOLING) c-headers check
+
+generate-header:
+	$(SDK_TOOLING) c-headers generate
 
 lint:
 	$(SDK_TOOLING) quality check --dotnet

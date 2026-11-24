@@ -1,9 +1,8 @@
 use super as ffi;
 use serde_json::{Value, json};
-use software_licensing::Session;
-use std::{ptr::NonNull, sync::Mutex};
+use std::ptr::NonNull;
 
-struct SessionHandle(NonNull<Mutex<Session>>);
+struct SessionHandle(NonNull<ffi::SessionHandle>);
 
 struct WireReply {
     code: u32,

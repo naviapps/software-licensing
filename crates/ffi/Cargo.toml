@@ -11,6 +11,9 @@ rust-version.workspace = true
 name = "software_licensing"
 crate-type = ["cdylib"]
 
+[package.metadata.c-bindings]
+module = "CSoftwareLicensing"
+
 [dependencies]
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }

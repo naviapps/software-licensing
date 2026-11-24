@@ -11,6 +11,11 @@ use software_licensing::{
 use std::sync::Mutex;
 use zeroize::Zeroizing;
 
+/// Native ABI version. Record version 2 reads and upgrades version 1.
+pub const SOFTWARE_LICENSING_ABI_VERSION: u32 = 6u32;
+
+pub struct SessionHandle(Mutex<Session>);
+
 pub struct Json {
     code: u32,
     bytes: Zeroizing<Vec<u8>>,
@@ -60,22 +65,24 @@ unsafe fn input<'a>(data: *const u8, length: usize) -> Result<&'a [u8], Failure>
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn software_licensing_abi_version() -> u32 {
-    6
+    SOFTWARE_LICENSING_ABI_VERSION
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn software_licensing_session_create() -> *mut Mutex<Session> {
-    Box::into_raw(Box::new(Mutex::new(Session::default())))
+pub extern "C" fn software_licensing_session_create() -> *mut SessionHandle {
+    Box::into_raw(Box::new(SessionHandle(Mutex::new(Session::default()))))
 }
 
+/// Returns 1 when a completed effect is waiting for a valid timestamp, else 0.
+///
 /// # Safety
 /// The session must be live for the call. Null means no saved completion.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn software_licensing_session_has_completion(
-    session: *const Mutex<Session>,
+    session: *const SessionHandle,
 ) -> u32 {
     u32::from(
         unsafe { session.as_ref() }
-            .and_then(|session| session.lock().ok())
+            .and_then(|session| session.0.lock().ok())
             .is_some_and(|session| session.has_deferred_completion()),
     )
 }
@@ -153,28 +160,44 @@ fn dispatch(session: &Mutex<Session>, bytes: &[u8]) -> Result<Reply, Failure> {
         _ => Err(invalid()),
     }
 }
+/// Dispatches bounded UTF-8 JSON and never logs input. Effect IDs are opaque.
+/// Save the bytes from software_licensing_json_persistence_record once per persist
+/// effect and acknowledge its exact ID once with persisted or completeEffect.
+/// completeEffect takes id, now and a completion object with kind provider (result)
+/// or persisted (success). A null now retains the outcome. resumeCompletion takes
+/// now and cancelled and applies it once. Retry only after failure. Each retry
+/// has a fresh ID.
+///
+/// adoptExternallyVerifiedActivation requires host-verified authority, product scope
+/// and current entitlement. It performs value checks and persistence without a
+/// provider check.
+///
 /// # Safety
-/// Session must be live, input readable for length bytes. Calls are serialized;
-/// there are no host callbacks under the session lock. Returned JSON is owned.
+/// Session must be live and input readable for length bytes. Calls are serialized
+/// and no host callbacks run under the session lock. Returned JSON is owned.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn software_licensing_session_dispatch(
-    session: *const Mutex<Session>,
+    session: *const SessionHandle,
     data: *const u8,
     length: usize,
 ) -> *mut Json {
     let result = (|| {
         let session = unsafe { session.as_ref() }.ok_or_else(invalid)?;
-        dispatch(session, unsafe { input(data, length)? })
+        dispatch(&session.0, unsafe { input(data, length)? })
     })();
     Json::reply(result)
 }
 
+/// Decodes present storage bytes into a fresh session. Dispatch restore without an
+/// inline record to use the staged value. Skip staging for absent storage.
+/// The JSON size limit applies to the normalized record.
+///
 /// # Safety
-/// Session must be live and the byte range must be readable for its length.
-/// Call only for present storage bytes before dispatching restore.
+/// Session must be live and the borrowed byte range readable for length bytes.
+/// Returned JSON is owned.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn software_licensing_session_stage_record(
-    session: *const Mutex<Session>,
+    session: *const SessionHandle,
     data: *const u8,
     length: usize,
 ) -> *mut Json {
@@ -189,6 +212,7 @@ pub unsafe extern "C" fn software_licensing_session_stage_record(
             unsafe { std::slice::from_raw_parts(data, length) }
         };
         session
+            .0
             .lock()
             .map_err(|_| invalid())?
             .stage_stored_record(bytes)
@@ -198,7 +222,7 @@ pub unsafe extern "C" fn software_licensing_session_stage_record(
 /// # Safety
 /// Session must be null or exclusively owned with no calls remaining.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn software_licensing_session_destroy(session: *mut Mutex<Session>) {
+pub unsafe extern "C" fn software_licensing_session_destroy(session: *mut SessionHandle) {
     if !session.is_null() {
         drop(unsafe { Box::from_raw(session) });
     }
@@ -272,19 +296,21 @@ fn decode_stored_record(bytes: Option<Vec<u8>>) -> Result<serde_json::Value, Fai
     software_licensing::decode_record_json(&Zeroizing::new(bytes))
 }
 
+/// On Windows this uses the supplied host-owned private directory. A save
+/// encrypts the exact bytes of the borrowed UTF-8 JSON record.
+///
 /// # Safety
-/// Input must be readable for length bytes. For a save, record must be readable
-/// for record_length bytes. Other operations require a null/zero record.
-/// On Windows this uses the supplied host-owned private directory.
+/// The request must be readable for length bytes. For a save, record must be
+/// readable for record_length bytes. Pass null and zero when loading or deleting.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn software_licensing_windows_storage(
-    data: *const u8,
+    request: *const u8,
     length: usize,
     record: *const u8,
     record_length: usize,
 ) -> *mut Json {
     let result = (|| {
-        let v: StorageInput = software_licensing::decode(unsafe { input(data, length)? })?;
+        let v: StorageInput = software_licensing::decode(unsafe { input(request, length)? })?;
         let store =
             software_licensing_windows::WindowsLicenseStorage::new(v.directory, &v.namespace)?;
         let absent_record = record.is_null() && record_length == 0;
@@ -309,6 +335,9 @@ pub unsafe extern "C" fn software_licensing_windows_storage(
 #[cfg(test)]
 #[path = "../tests/unit/windows_storage.rs"]
 mod windows_storage_tests;
+
+/// Returns a view with code 0 for a value or 1 for a static failure.
+///
 /// # Safety
 /// Owner must be live until all borrowed byte reads finish. Null returns an error view.
 #[unsafe(no_mangle)]
@@ -326,9 +355,13 @@ pub unsafe extern "C" fn software_licensing_json_view(owner: *const Json) -> Jso
         },
     }
 }
+/// Borrows the UTF-8 storage record for this reply's persist effect. Copy the
+/// bytes before destroying the owner. An absent record or null owner returns
+/// null and writes zero to length, if supplied.
+///
 /// # Safety
 /// Owner must be live until all borrowed byte reads finish. Length may be null
-/// or writable for one `usize`. Null owner or absent record returns null/zero.
+/// when no count is needed, or writable for one `usize`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn software_licensing_json_persistence_record(
     owner: *const Json,

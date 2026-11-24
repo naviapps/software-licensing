@@ -424,6 +424,8 @@ checks source lint, Rust Clippy and tests, strict Swift tests, the managed lifec
 fixture and the standalone SwiftPM consumer. The `sdk-tooling` task in
 [`mise.toml`](mise.toml) pins the shared development tools to a public Git revision.
 Set `DEVELOPER_DIR` when Xcode is not the globally selected developer directory.
+Run `mise exec -- make native` to regenerate the C header and module map
+and rebuild the framework. `make check-header` verifies the generated files.
 
 ## Development tooling
 
