@@ -7,7 +7,7 @@ own product scope, commercial policy, UI and secure-storage namespaces.
 
 Start with [SwiftPM installation](#swiftpm-installation),
 [Rust and C installation](#rust-and-c-installation), or the
-[.NET package guide](https://github.com/naviapps/software-licensing/blob/main/bindings/dotnet/README.md). The
+[.NET package guide](bindings/dotnet/README.md). The
 [storage and recovery contract](#storage-and-recovery) applies to every binding.
 Maintainers use [build and acceptance](#build-and-acceptance) and
 [development tooling](#development-tooling).
@@ -48,8 +48,6 @@ The SDK does not implement checkout, billing, merchant APIs or license issuance.
   Use x64 .NET under emulation on Windows 11 ARM64 (build 26100 or later).
 
 `Package.swift` exposes `SoftwareLicensing` and `SoftwareLicensingKeychain`.
-The [.NET guide](https://github.com/naviapps/software-licensing/blob/main/bindings/dotnet/README.md)
-covers local installation of the verified `.nupkg` and native runtime requirements.
 
 ## SwiftPM installation
 
@@ -427,14 +425,6 @@ fixture and the standalone SwiftPM consumer. The `sdk-tooling` task in
 [`mise.toml`](mise.toml) pins the shared development tools to a public Git revision.
 Set `DEVELOPER_DIR` when Xcode is not the globally selected developer directory.
 
-Use the [Windows package acceptance](bindings/dotnet/README.md#windows-package-acceptance)
-procedure to build one x64 DLL and exercise it from Rust, C, .NET and an isolated
-NuGet consumer on an owned Windows 11 ARM64 host. The .NET fixture checks DPAPI
-with synthetic records in a temporary directory. The receipt identifies the
-ARM64 host, x64 target, .NET SDK, emulated execution and verified package bytes.
-Local checks, macOS app integration and exact-source Windows executions provide
-separate evidence.
-
 ## Development tooling
 
 GitHub Actions runs the same strict Swift tests and standalone Swift consumer
@@ -447,6 +437,8 @@ checks use synthetic fixture providers.
 Run `mise exec -- make check-distribution` for native provenance,
 C ownership under AddressSanitizer, .NET and isolated NuGet consumers, and
 portable build-driver tests. The local fixtures exercise each platform's library.
+Use `mise exec -- make test-dotnet` for just the macOS framework and managed
+lifecycle fixtures with synthetic providers and in-memory storage.
 The GitHub distribution check creates one NuGet from the verified Windows x64 DLL
 and the universal macOS framework, then installs the same package on macOS and
 Windows. Reuse the pinned tooling for `make native`
@@ -468,6 +460,31 @@ gh workflow run check-sdk-distribution.yml -R naviapps/sdk-tooling \
 
 Download the combined `software-licensing-nuget-<revision>-<attempt>` artifact
 from a successful run and follow the [.NET installation guide](bindings/dotnet/README.md#installation).
+
+### Windows package acceptance
+
+Use a clean committed checkout on an owned Windows 11 ARM64 worker with build
+26100 or later. Install the SDK's pinned uv and native ARM64 Python with mise and
+prepare the ARM64 Rust toolchain with the `x86_64-pc-windows-msvc` standard
+library. Select `HostARM64\x64` with `VsDevCmd.bat -host_arch=arm64 -arch=x64`
+and set `DOTNET_BIN` to the absolute path of the pinned x64 `dotnet.exe`.
+
+```powershell
+mise run sdk-tooling -- python distribution/verify_windows.py --architecture x64
+```
+
+This verifies one x64 DLL through C ABI, .NET recovery, temporary current-user
+DPAPI storage and the isolated NuGet consumer. The package and receipt are
+retained under `.native-build/win-x64/<version>/` and, when configured, under
+`win-x64/<version>/` in `VM_RUNNER_ARTIFACTS_DIR`. The receipt records source,
+build helper hashes, .NET SDK version, execution architecture and verified bytes.
+
+On an owned x64 Windows worker with the Visual Studio C++ workload, append
+`--native-aot` to check Native AOT with JSON reflection disabled. The receipt
+records success in `nativeAotFixtureExecuted`. Hosted Windows distribution also
+runs this Native AOT consumer before exporting the DLL for the combined package.
+The combined package runs the same activation, reopen, refresh and deactivation
+fixture after restore.
 
 ## Static checks
 

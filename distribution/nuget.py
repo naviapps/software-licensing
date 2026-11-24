@@ -5,6 +5,14 @@ from sdk_tooling.nuget import retained_notice_files
 PACKAGE = "NaviApps.SoftwareLicensing"
 
 
+def package_files(root):
+    return {
+        "LICENSE": root / "LICENSE",
+        "README.md": root / "bindings/dotnet/README.md",
+        **retained_notice_files(root / "ThirdParty", "licenses"),
+    }
+
+
 def check_package(
     nuget,
     dotnet,
@@ -19,10 +27,9 @@ def check_package(
     exclude_paths,
     native_aot=False,
 ):
-    notices = retained_notice_files(root / "ThirdParty", "licenses")
     digest = nuget.audit_package(
         package,
-        expected_files={"LICENSE": root / "LICENSE", "README.md": root / "README.md", **notices},
+        expected_files=package_files(root),
         runtime_files={f"runtimes/{rid}/native/{library.name}": library},
     )
     properties = {"Nullable": "enable", "TreatWarningsAsErrors": "true"}

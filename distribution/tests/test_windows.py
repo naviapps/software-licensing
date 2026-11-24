@@ -213,7 +213,8 @@ class WindowsOutputTests(unittest.TestCase):
             output.mkdir()
             (output / package_name).write_bytes(package_bytes)
 
-        def audit(_package, *, runtime_files, **_):
+        def audit(_package, *, expected_files, runtime_files):
+            self.assertEqual(expected_files["README.md"], root / "bindings/dotnet/README.md")
             self.assertEqual(set(runtime_files), {"runtimes/win-x64/native/software_licensing.dll"})
             (dll,) = runtime_files.values()
             self.assertEqual(dll.read_bytes(), library.read_bytes())

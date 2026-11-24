@@ -9,31 +9,62 @@ architecture, or the x64 .NET SDK on Windows. Check the architecture with
 `dotnet --info`.
 
 Download the combined NuGet artifact from an exact-revision
-[distribution check](../../README.md#distribution-checks). Verify the package's
-SHA-256 against the accompanying `.nupkg.json` receipt and use its directory
-as a local NuGet source.
+[distribution check](https://github.com/naviapps/software-licensing#distribution-checks).
+Verify the package's SHA-256 against the accompanying `.nupkg.json` receipt.
 
-In an empty consumer directory, select the exact package version and replace
-`C:\owned\packages` with the directory containing the verified package.
+In an empty project directory, replace the source path with the absolute path
+to the directory containing the verified package. Use its exact version.
 
-```powershell
+```sh
 dotnet new console --framework net10.0 --no-restore
 dotnet package add NaviApps.SoftwareLicensing --version "[0.1.0]" --no-restore
-dotnet restore --source "C:\owned\packages" --packages .nuget-packages -p:UseAppHost=false
+dotnet restore --source "/path/to/packages" --packages .nuget-packages -p:UseAppHost=false
 ```
 
-Copy the [standalone .NET example](../../fixtures/consumers/dotnet/Program.cs) to
-`Program.cs`, then run `dotnet run --no-restore -p:UseAppHost=false`.
-The same example runs against the isolated NuGet package in distribution checks.
-It uses synthetic access and in-memory storage to activate, reopen, refresh and deactivate.
+## First use
+
+Replace `Program.cs` with this example. It uses synthetic access and in-memory
+storage.
+
+```csharp
+using NaviApps.SoftwareLicensing;
+
+var configuration = new CallbackLicenseProvider.Configuration("com.example.app", "pro");
+var provider = new CallbackLicenseProvider(configuration, _ => Task.FromResult(true));
+using var manager = new LicenseManager(provider, new MemoryStorage());
+if (manager.InitialRestoreError is { } failure)
+    throw new LicenseException(failure);
+
+var state = await manager.ActivateAsync(LicenseActivationRequest.Automatic);
+Console.WriteLine(state.Plan.Identifier);
+
+sealed class MemoryStorage : ILicenseStorage
+{
+    private byte[]? record;
+
+    public byte[]? Load() => record?.ToArray();
+    public void Save(byte[] value) => record = value.ToArray();
+}
+```
+
+Run `dotnet run --no-restore -p:UseAppHost=false`. It prints `pro`.
+The [standalone consumer fixture](https://github.com/naviapps/software-licensing/blob/main/fixtures/consumers/dotnet/Program.cs)
+also tests reopen, refresh and deactivation.
+
+## Application integration
 
 For application integration, use `CallbackLicenseProvider` with a read-only
-access check or supply an `ILicenseProvider` for key-based licensing. Select an
-`ILicenseStorage` and create a `LicenseManager`. Windows hosts can use
-`WindowsLicenseStorage`; each manager needs its own private absolute directory
-and stable namespace. Inspect `InitialRestoreError` before starting mutations.
-The callback provider preserves typed failures and marks them `NotApplied`.
-The manager clears failed activation intents so the user can retry.
+access check or supply an `ILicenseProvider` for key-based licensing. Implement
+`ILicenseStorage` with atomic load and save for durable access. On Windows 11
+build 26100 or later, `WindowsLicenseStorage` uses current-user DPAPI. Give each
+record its own private absolute directory and keep its namespace stable.
+
+Inspect `InitialRestoreError` before mutations. Keep the existing bytes and
+call `Reload()` after correcting the storage or clock issue.
+Read `LicenseException.Failure` for typed operation errors. The read-only
+callback marks failures `NotApplied`, enabling a retry after the manager
+clears the activation intent. If a remote activation's outcome is unknown,
+resolve the pending intent with authoritative provider evidence before retrying.
 
 Use `LicenseSource.NormalizeIdentifier`, `LicenseActivation.CreateValidated`,
 `LicenseValidationResult.CreateValidated` and `LicenseRefreshPolicy.CreateValidated`
@@ -45,47 +76,5 @@ manager validates those values when it processes them.
 `Plan` projects the current state. `NeedsRefresh()` uses the manager's clock,
 and `NeedsRefresh(now)` uses the supplied observed time for refresh eligibility
 and rollback protection. The query makes no provider or storage calls.
-The [lifecycle and recovery guide](https://github.com/naviapps/software-licensing#readme)
-defines access, refresh scheduling and persistence recovery for all bindings.
-The [managed fixtures](tests/SoftwareLicensing.Tests/Program.cs) exercise these
-APIs with synthetic provider results. Ordinary package consumers do not need
-Rust or Python developer tooling.
-
-## Maintainer build
-
-### Windows package acceptance
-
-From the SDK root, follow the
-[distribution setup](../../README.md#distribution-checks)
-with a clean committed checkout on an owned Windows 11 ARM64 worker. Prepare
-native ARM64 Python and the pinned ARM64 Rust toolchain with the
-`x86_64-pc-windows-msvc` standard library. Select `HostARM64\x64` with
-`VsDevCmd.bat -host_arch=arm64 -arch=x64` and set `DOTNET_BIN` to the absolute
-path of the pinned x64 .NET SDK. Install the SDK's pinned uv and Python with mise.
-
-```powershell
-mise run sdk-tooling -- python distribution/verify_windows.py --architecture x64
-```
-
-This verifies a single DLL across C, .NET recovery and DPAPI fixtures, and the
-isolated NuGet consumer. The Windows-only verification package and its receipt
-are retained under `.native-build/win-x64/<version>/` and, when configured,
-under `win-x64/<version>/` in `VM_RUNNER_ARTIFACTS_DIR`. The receipt records
-the SDK and shared build helper hashes.
-
-The hosted Windows distribution check runs the isolated consumer with Native AOT
-and JSON reflection disabled before exporting the same DLL for the combined
-package. The fixture exercises activation, persistence and reopen, refresh, and
-deactivation using in-memory storage and temporary current-user DPAPI storage.
-The combined package runs the same lifecycle fixture after restore.
-
-On an owned x64 Windows worker with the Visual Studio C++ workload, append
-`--native-aot` to the acceptance command to run the same check. On Windows ARM64,
-run the standard command to verify x64 emulation. For local Native AOT checks,
-the Windows acceptance receipt records success in `nativeAotFixtureExecuted`.
-
-### macOS checks
-
-`mise exec -- make test-dotnet` on macOS verifies the tracked
-framework and runs managed lifecycle fixtures against it. It exercises fake
-providers and in-memory storage. Windows x64 validation exercises DPAPI.
+See [storage and recovery](https://github.com/naviapps/software-licensing#storage-and-recovery)
+for the full persistence and provider recovery contract.

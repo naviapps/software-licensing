@@ -26,7 +26,7 @@
       <Link Condition="'$(OS)' == 'Windows_NT'">software_licensing.dll</Link>
       <Link Condition="'$(OS)' != 'Windows_NT'">libsoftware_licensing.dylib</Link>
     </None>
-    <None Include="../../../../README.md" Pack="true" PackagePath="/README.md" />
+    <None Include="../../README.md" Pack="true" PackagePath="/README.md" />
     <None Include="../../../../LICENSE" Pack="true" PackagePath="/" />
     <None Include="../../../../ThirdParty/**/*" Exclude="../../../../ThirdParty/**/.DS_Store;../../../../ThirdParty/**/registry-notices.json" Pack="true" PackagePath="licenses/" />
   </ItemGroup>
