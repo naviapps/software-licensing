@@ -8,7 +8,7 @@
     <PackageId>NaviApps.SoftwareLicensing</PackageId>
     <Version>0.1.0</Version>
     <Description>Rust-backed license lifecycle, transactional persistence and recovery.</Description>
-    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
