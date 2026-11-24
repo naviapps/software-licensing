@@ -14,16 +14,16 @@ Maintainers use [build and acceptance](#build-and-acceptance) and
 
 ## Layout
 
-| Path                                             | Contents                                               |
-| ------------------------------------------------ | ------------------------------------------------------ |
-| `crates/`                                        | Rust implementation and C API in `crates/ffi/include/` |
-| `crates/ffi/tests/c/`                            | C ABI tests                                            |
-| `Sources/`, `Tests/`                             | Swift bindings and tests                               |
-| `bindings/dotnet/src/<project>/`                 | Named .NET source projects                             |
-| `bindings/dotnet/tests/SoftwareLicensing.Tests/` | .NET test project and fixtures                         |
-| `fixtures/consumers/`                            | Independent SDK clients                                |
-| `distribution/`                                  | SDK-specific package checks                            |
-| `Artifacts/`, `ThirdParty/`                      | Native packages and upstream notices                   |
+| Path                                             | Contents                                   |
+| ------------------------------------------------ | ------------------------------------------ |
+| `crates/`                                        | Rust implementation and C ABI declarations |
+| `crates/ffi/tests/c/`                            | C ABI tests                                |
+| `Sources/`, `Tests/`                             | Swift bindings and tests                   |
+| `bindings/dotnet/src/<project>/`                 | Named .NET source projects                 |
+| `bindings/dotnet/tests/SoftwareLicensing.Tests/` | .NET test project and fixtures             |
+| `fixtures/consumers/`                            | Independent SDK clients                    |
+| `distribution/`                                  | SDK-specific package checks                |
+| `Artifacts/`, `ThirdParty/`                      | Native packages and upstream notices       |
 
 ## Products
 
@@ -424,8 +424,11 @@ checks source lint, Rust Clippy and tests, strict Swift tests, the managed lifec
 fixture and the standalone SwiftPM consumer. The `sdk-tooling` task in
 [`mise.toml`](mise.toml) pins the shared development tools to a public Git revision.
 Set `DEVELOPER_DIR` when Xcode is not the globally selected developer directory.
-Run `mise exec -- make native` to regenerate the C header and module map
-and rebuild the framework. `make check-header` verifies the generated files.
+Run `mise exec -- make native` after changing the Rust FFI declarations.
+SDK Tooling generates the C header and module map under `crates/ffi/` and
+embeds both in the SwiftPM framework. To generate only these files, run
+`mise exec -- make generate-header`. `mise exec -- make check-header` checks the
+generated declarations against the framework.
 
 ## Development tooling
 
@@ -466,9 +469,9 @@ from a successful run and follow the [.NET installation guide](bindings/dotnet/R
 ### Windows package acceptance
 
 Use a clean committed checkout on an owned Windows 11 ARM64 worker with build
-26100 or later. Install the SDK's pinned uv and native ARM64 Python with mise and
-prepare the ARM64 Rust toolchain with the `x86_64-pc-windows-msvc` standard
-library. Select `HostARM64\x64` with `VsDevCmd.bat -host_arch=arm64 -arch=x64`
+26100 or later. Prepare the ARM64 Rust toolchain with the
+`x86_64-pc-windows-msvc` standard library and install pinned uv, native ARM64
+Python and cbindgen with mise. Select `HostARM64\x64` with `VsDevCmd.bat -host_arch=arm64 -arch=x64`
 and set `DOTNET_BIN` to the absolute path of the pinned x64 `dotnet.exe`.
 
 ```powershell

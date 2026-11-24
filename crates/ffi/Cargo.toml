@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 
 [package.metadata.c-bindings]
 module = "CSoftwareLicensing"
+generated = true
 
 [dependencies]
 serde.workspace = true

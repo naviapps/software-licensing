@@ -1,4 +1,0 @@
-framework module CSoftwareLicensing {
-  umbrella header "software_licensing.h"
-  export *
-}

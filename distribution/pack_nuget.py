@@ -4,6 +4,7 @@
 import argparse
 from pathlib import Path
 
+from sdk_tooling.c_headers import prepare_generated
 from sdk_tooling.native_plan import ffi_product
 from sdk_tooling.nuget import pack_native
 from sdk_tooling.windows_delivery import RID
@@ -20,6 +21,7 @@ def main(argv=None):
     parser.add_argument("--runtime", action="append", required=True, choices=RUNTIMES)
     parser.add_argument("--result", type=Path, help="Write the verified package filename")
     args = parser.parse_args(argv)
+    prepare_generated(ROOT)
     native = ffi_product(ROOT) if set(args.runtime) == {RID} else xcframework(ROOT)
     package = pack_native(
         native,

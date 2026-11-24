@@ -1202,7 +1202,7 @@
         },
         "inputs": {
           "Cargo.toml": "24512ca897be9bb916b387e2ca06988ee8b63e87ebd6d8bfa90bb296a21d9adf",
-          "crates/ffi/Cargo.toml": "1ff359c87ba057ccb03700e352d2dcc43306783e115107b66768306b5bc456ef"
+          "crates/ffi/Cargo.toml": "76e1aa9d970963b53924cc2a25729ad25464c9a9bb9fd26ddf0d9b2d7257ff4f"
         },
         "name": "software-licensing-ffi",
         "source": "workspace",
@@ -1649,7 +1649,7 @@
       "Cargo.lock": "41d6cc326624de59f2741115731b861138ffb5948211cafcc642c7dcb7a604db",
       "Cargo.toml": "24512ca897be9bb916b387e2ca06988ee8b63e87ebd6d8bfa90bb296a21d9adf",
       "crates/core/Cargo.toml": "9a5939b84a5b51b52f8dde366dada24c8e4fd1b57e8bd85dd69828c3cb8b2d1d",
-      "crates/ffi/Cargo.toml": "1ff359c87ba057ccb03700e352d2dcc43306783e115107b66768306b5bc456ef",
+      "crates/ffi/Cargo.toml": "76e1aa9d970963b53924cc2a25729ad25464c9a9bb9fd26ddf0d9b2d7257ff4f",
       "crates/windows/Cargo.toml": "505254ac34fe5c7066957e887cfcf4930e7b5b7dde90802c96d78fe1bfc8f055",
       "rust-toolchain.toml": "d13306be0ecda81ce779baa290ffb417380d525928477f16200884b5169cca33"
     }
@@ -1719,7 +1719,7 @@
     "crates/core/src/model.rs": "8bf312ef8b45abba277e49ad36e8b8aae1a01e8754d6f647b16da384e6dac173",
     "crates/core/src/persistence.rs": "b308cc31beac7c2a6d4c3b2ce3c636165fe016d4566ee7f68b535f8485f1b06b",
     "crates/core/src/session.rs": "2e2e3274b333ee8f5b0fa9c2ee4fe3867b369cf072ab79f33a4a165e67108678",
-    "crates/ffi/Cargo.toml": "1ff359c87ba057ccb03700e352d2dcc43306783e115107b66768306b5bc456ef",
+    "crates/ffi/Cargo.toml": "76e1aa9d970963b53924cc2a25729ad25464c9a9bb9fd26ddf0d9b2d7257ff4f",
     "crates/ffi/include/software_licensing.h": "bfd81df02224023e8ecad5a06a83c152b84c51acc4b1f88fbb54a7795df0c6c1",
     "crates/ffi/module.modulemap": "ce5ec6ade3440e7e36c82d9821204368ad14c88842c57c2c7e355ad140d14360",
     "crates/ffi/src/lib.rs": "5a38d2ceece2ac250aa4e0c4b8df93c78f00377cc88ed198e2d1a1d9c9f89a9a",

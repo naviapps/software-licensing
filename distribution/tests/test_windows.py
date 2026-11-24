@@ -194,6 +194,9 @@ class WindowsOutputTests(unittest.TestCase):
         native = local_modules["ffi"].FfiProduct.return_value
         native.version = "0.1.0"
         native.library = "software_licensing"
+        include = root / "crates/ffi/include"
+        headers = [include / "software_licensing.h"]
+        prepare_generated = Mock()
         windows.native_environment.return_value = (env, root / "MSVC", dotnet)
         windows.build_library.return_value = built
         windows.verify_artifact.return_value = (built, receipt)
@@ -240,6 +243,7 @@ class WindowsOutputTests(unittest.TestCase):
             ),
             patch.dict(os.environ, environment, clear=True),
             patch.object(driver, "load", side_effect=local_modules.__getitem__),
+            patch.object(driver, "prepare_generated", prepare_generated),
             patch.object(
                 driver,
                 "support_inputs",
@@ -303,8 +307,10 @@ class WindowsOutputTests(unittest.TestCase):
         accepted_dll = candidate / library.name
         self.assertEqual(c["libraries"], [candidate / import_library.name])
         self.assertEqual(c["compiler"], [root / "MSVC/cl.exe"])
+        self.assertEqual(c["include_dirs"], [include])
+        prepare_generated.assert_called_once_with(root)
         windows.require_pe_machine.assert_called_once_with(c["output"], "x64")
-        self.assertEqual(windows.verify_library.call_args.args[0], accepted_dll)
+        self.assertEqual(windows.verify_library.call_args.args[:2], (accepted_dll, headers))
         managed_call = managed.run_managed.call_args.kwargs
         self.assertEqual(managed_call["runtime"], "win-x64")
         self.assertEqual(

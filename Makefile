@@ -12,7 +12,7 @@ check-source: lint check-header test-rust test-managed
 
 check-distribution: test-distribution-tools native-verify test-dotnet test-c
 
-native: generate-header
+native:
 	$(SDK_TOOLING) xcframework
 
 native-verify: check-header

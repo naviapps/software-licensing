@@ -10,6 +10,7 @@ from pathlib import Path
 
 from sdk_tooling.adapters import load, support_inputs
 from sdk_tooling.artifacts import file_sha256 as sha256
+from sdk_tooling.c_headers import prepare_generated
 from sdk_tooling.native_plan import ffi_product
 from sdk_tooling.windows_delivery import RID, TARGET, X64Acceptance, publish_x64
 
@@ -64,6 +65,7 @@ def main(argv=None):
     artifact_root = load("vm_environment").artifacts_dir(env)
     if args.export_native and artifact_root is None:
         parser.error("--export-native requires an owned artifact directory")
+    prepare_generated(ROOT)
     native = ffi_product(ROOT, factory=load("ffi").FfiProduct)
     built = acceptance.build(native)
     output = ROOT / ".native-build"

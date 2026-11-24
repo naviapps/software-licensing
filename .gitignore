@@ -2,6 +2,8 @@
 /.build/
 /.swiftpm/
 /.native-build/
+/crates/ffi/include/software_licensing.h
+/crates/ffi/module.modulemap
 /bindings/dotnet/**/bin/
 /bindings/dotnet/**/obj/
 /bindings/dotnet/runtimes/
