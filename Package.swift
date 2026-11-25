@@ -12,10 +12,6 @@ let package = Package(
     .binaryTarget(name: "CSoftwareLicensing", path: "Artifacts/CSoftwareLicensing.xcframework"),
     .target(name: "SoftwareLicensing", dependencies: ["CSoftwareLicensing"]),
     .target(name: "SoftwareLicensingKeychain", dependencies: ["SoftwareLicensing"]),
-    .testTarget(
-      name: "SoftwareLicensingTests",
-      dependencies: [
-        "SoftwareLicensing", "SoftwareLicensingKeychain",
-      ]),
+    .testTarget(name: "SoftwareLicensingTests", dependencies: ["SoftwareLicensing"]),
   ]
 )
