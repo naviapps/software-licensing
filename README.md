@@ -43,7 +43,7 @@ The SDK does not implement checkout, billing, merchant APIs or license issuance.
 ## Requirements
 
 - Swift 6.3 and macOS 26 or later. The universal framework supports ARM64 and Intel.
-- Rust 1.99.1. See `rust-toolchain.toml` and the locked registry dependencies.
+- Rust 1.100.0. See `rust-toolchain.toml` and the locked registry dependencies.
 - .NET 10. One NuGet package supplies `osx-arm64`, `osx-x64` and `win-x64`.
   Use x64 .NET under emulation on Windows 11 ARM64 (build 26100 or later).
 
