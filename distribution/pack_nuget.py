@@ -31,7 +31,6 @@ def main(argv=None):
         input_files=[
             Path(__file__),
             ROOT / "distribution/nuget.py",
-            ROOT / "native.toml",
             ROOT / "mise.toml",
         ],
         runtimes=args.runtime,

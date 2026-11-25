@@ -1,0 +1,42 @@
+[[native.artifacts]]
+id = "sdk"
+symbol_prefix = "software_licensing_"
+minimum_macos = "26.0"
+
+[checks.swift]
+executable = "CoreLifecycleConsumer"
+inputs = ["Package.swift", "Sources", "Tests", "Artifacts", "ThirdParty", "LICENSE"]
+
+[checks.rust_c]
+git_url = "https://github.com/naviapps/software-licensing.git"
+rust_packages = ["software-licensing"]
+
+[checks.rust_c.c]
+framework = "Artifacts/CSoftwareLicensing.xcframework/macos-arm64_x86_64/CSoftwareLicensing.framework"
+header = "software_licensing.h"
+
+[checks.windows_bindings]
+packages = ["software-licensing-ffi"]
+projects = ["bindings/dotnet/tests/SoftwareLicensing.Tests/SoftwareLicensing.Tests.csproj"]
+
+[checks.nuget]
+package_id = "NaviApps.SoftwareLicensing"
+fixtures = ["fixtures/consumers/dotnet/Program.cs"]
+windows_x64 = true
+
+[distribution.macos]
+commands = [
+  ["cargo", "fetch", "--locked"],
+  ["make", "check-distribution"],
+  ["sdk-tooling", "rust-c-consumers"],
+]
+
+[distribution.windows]
+commands = [
+  ["rustup", "install", "--no-self-update"],
+  ["sdk-tooling", "python", "-m", "unittest", "discover", "-s", "distribution/tests"],
+  ["sdk-tooling", "windows", "distribution/verify_windows.py", "--native-aot", "--export-native"],
+]
+
+[distribution.nuget]
+pack = "distribution/pack_nuget.py"

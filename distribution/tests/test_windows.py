@@ -137,8 +137,8 @@ class WindowsOutputTests(unittest.TestCase):
         fixture.parent.mkdir(parents=True)
         fixture.write_text('System.Console.WriteLine("synthetic");')
         (root / "global.json").write_text('{"sdk":{"version":"10.0.403","rollForward":"disable"}}')
-        (root / "native.toml").write_bytes(
-            b'[[artifacts]]\nid = "sdk"\nsymbol_prefix = "software_licensing_"\nminimum_macos = "26.0"\n'
+        (root / "sdk-tooling.toml").write_bytes(
+            b'[[native.artifacts]]\nid = "sdk"\nsymbol_prefix = "software_licensing_"\nminimum_macos = "26.0"\n'
         )
         output = root / ".native-build"
         built = output / "accepted"
@@ -287,7 +287,7 @@ class WindowsOutputTests(unittest.TestCase):
         local_modules["ffi"].FfiProduct.assert_called_once_with(
             root.resolve(),
             symbol_prefix="software_licensing_",
-            specification="native.toml",
+            specification="sdk-tooling.toml",
         )
         self.assertEqual(
             commands.call_args_list[0].args[0], list(windows_delivery.locked_fetch_args())

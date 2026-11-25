@@ -447,8 +447,8 @@ lifecycle fixtures with synthetic providers and in-memory storage.
 The GitHub distribution check creates one NuGet from the verified Windows x64 DLL
 and the universal macOS framework, then installs the same package on macOS and
 Windows. Reuse the pinned tooling for `make native`
-after changing native inputs and for `make native-verify`. [`native.toml`](native.toml)
-selects the FFI artifact and records its build policy.
+after changing native inputs and for `make native-verify`. The `[native]` section of
+[`sdk-tooling.toml`](sdk-tooling.toml) selects the FFI artifact and records its build policy.
 
 Use `mise exec -- make test-installed-consumers` from a clean, complete SDK
 checkout. The Rust fixture uses a local mirror of the exact SDK commit. The C
