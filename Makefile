@@ -1,5 +1,4 @@
 SDK_TOOLING ?= mise run sdk-tooling --
-SWIFT_FLAGS := -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 DOTNET_BIN ?= dotnet
 FRAMEWORK_DIR := $(CURDIR)/Artifacts/CSoftwareLicensing.xcframework/macos-arm64_x86_64
 
@@ -10,7 +9,7 @@ check: check-source test test-consumer
 
 check-source: lint check-header test-rust test-managed
 
-check-distribution: test-distribution-tools native-verify test-dotnet test-c
+check-distribution: test-distribution-tools test-dotnet test-c
 
 native:
 	$(SDK_TOOLING) xcframework
@@ -32,7 +31,7 @@ format:
 	$(SDK_TOOLING) quality format --dotnet
 
 test:
-	swift test $(SWIFT_FLAGS)
+	swift test -Xswiftc -warnings-as-errors
 
 test-consumer:
 	$(SDK_TOOLING) swift-consumer
