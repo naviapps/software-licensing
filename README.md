@@ -77,17 +77,17 @@ let package = Package(
 )
 ```
 
-For a first run, save the [standalone Swift example][swift-consumer] as
-`Sources/MyApp/Consumer.swift` in your package, then run `swift run MyApp` from
-the package directory. The example exercises the public lifecycle with
-in-memory storage and synthetic access checks. It constructs the Keychain adapter
+For a first run, save the [standalone Swift example][swift-consumer] from the
+selected revision as `Sources/MyApp/Consumer.swift` in your package, then run
+`swift run MyApp` from the package directory. The example exercises the public
+lifecycle with in-memory storage and synthetic access checks. It constructs the Keychain adapter
 without reading or writing a Keychain item. This is the same client exercised
 by the SDK's external consumer check.
 
 SwiftPM uses the checked-in native framework; ordinary Swift consumers do not
 run the SDK's Rust, .NET or Python development tools.
 
-[swift-consumer]: https://github.com/naviapps/software-licensing/blob/main/fixtures/consumers/swift/Sources/CoreLifecycleConsumer/Consumer.swift
+[swift-consumer]: fixtures/consumers/swift/Sources/CoreLifecycleConsumer/Consumer.swift
 
 In an app, supply its own source, plan, Keychain service and account, and a
 read-only access check:
@@ -370,7 +370,7 @@ software-licensing = { git = "https://github.com/naviapps/software-licensing.git
 Replace the placeholder with the commit you selected. Import `software_licensing`
 and keep your own `Cargo.lock`. A Windows Rust host can also select
 `software-licensing-windows` at the same URL and revision for DPAPI storage.
-For a first run, copy the [standalone Rust example](https://github.com/naviapps/software-licensing/blob/main/fixtures/consumers/rust/src/main.rs)
+For a first run, copy the [standalone Rust example](fixtures/consumers/rust/src/main.rs)
 from that revision into `src/main.rs` of a Cargo binary project and run `cargo run`.
 It exercises persistence acknowledgement and expiry with synthetic data.
 
@@ -400,15 +400,6 @@ binary. The C client needs no Cargo workspace or SDK development tooling.
 
 ## Build and acceptance
 
-`make check` includes the shared Swift consumer command. It stages only installable
-SDK inputs and builds and runs the independent `fixtures/consumers/swift` package
-with strict concurrency and warnings as errors. The fixture uses the public core
-and Keychain products, an injected fixed clock, callbacks and in-memory storage to
-check activation, reopen, refresh, deactivation and rejected activation. It only constructs
-Keychain storage and never reads or writes a Keychain item. Rust implementation,
-build caches and developer tooling trees are unavailable to this external package. This local
-source/artifact gate does not prove remote Git installation or publication.
-
 From the SDK root, review `mise.toml` and select its pinned developer tools.
 Xcode must supply Swift 6.3 and the macOS 26 SDK or later:
 
@@ -421,7 +412,8 @@ mise exec -- make check
 
 The checked-in framework is ready for validation after a fresh clone. `make check`
 checks source lint, Rust Clippy and tests, strict Swift tests, the managed lifecycle
-fixture and the standalone SwiftPM consumer. The `sdk-tooling` task in
+fixture and the [standalone SwiftPM consumer][swift-consumer]. The consumer runs
+against a disposable SDK containing only installable inputs. The `sdk-tooling` task in
 [`mise.toml`](mise.toml) pins the shared development tools to a public Git revision.
 Set `DEVELOPER_DIR` when Xcode is not the globally selected developer directory.
 Use `mise exec -- make lint` to check owned source and `mise exec -- make format`
@@ -429,8 +421,9 @@ to format it.
 Run `mise exec -- make native` after changing the Rust FFI declarations.
 SDK Tooling generates the C header and module map under `crates/ffi/` and
 embeds both in the SwiftPM framework. To generate only these files, run
-`mise exec -- make generate-header`. `mise exec -- make check-header` checks the
-generated declarations against the framework.
+`mise exec -- make generate-header`. Use `make check-header` to verify the
+declarations or `make native-verify` to verify the framework and receipt.
+The [native build declaration](sdk-tooling.toml) records the build policy.
 
 ## Development tooling
 
@@ -441,16 +434,13 @@ use synthetic fixture providers.
 
 ### Distribution checks
 
-Run `mise exec -- make check-distribution` for native provenance,
+On macOS, run `mise exec -- make check-distribution` for native provenance,
 C ownership under AddressSanitizer, .NET and isolated NuGet consumers, and
-portable build-driver tests. The local fixtures exercise each platform's library.
-Use `mise exec -- make test-dotnet` for just the macOS framework and managed
-lifecycle fixtures with synthetic providers and in-memory storage.
+portable build-driver tests. Use `mise exec -- make test-dotnet` for the managed
+lifecycle fixtures and isolated NuGet consumer against the macOS framework.
 The GitHub distribution check creates one NuGet from the verified Windows x64 DLL
 and the universal macOS framework, then installs the same package on macOS and
-Windows. Reuse the pinned tooling for `make native`
-after changing native inputs and for `make native-verify`. The `[native]` section of
-[`sdk-tooling.toml`](sdk-tooling.toml) selects the FFI artifact and records its build policy.
+Windows.
 
 Use `mise exec -- make test-installed-consumers` from a clean, complete SDK
 checkout. The Rust fixture uses a local mirror of the exact SDK commit. The C
@@ -470,14 +460,15 @@ from a successful run and follow the [.NET installation guide](bindings/dotnet/R
 
 ### Windows package acceptance
 
-Use a clean committed checkout on an owned Windows 11 ARM64 worker with build
-26100 or later. Prepare the ARM64 Rust toolchain with the
-`x86_64-pc-windows-msvc` standard library and install pinned uv, native ARM64
-Python and cbindgen with mise. Select `HostARM64\x64` with `VsDevCmd.bat -host_arch=arm64 -arch=x64`
-and set `DOTNET_BIN` to the absolute path of the pinned x64 `dotnet.exe`.
+Use a clean committed checkout on an owned Windows 11 worker with build 26100 or
+later. Install the pinned Python, uv and cbindgen with mise, Visual Studio C++
+tools for x64, and the Rust and .NET versions in
+[rust-toolchain.toml](rust-toolchain.toml) and [global.json](global.json).
+For ARM64, follow the
+[Windows on Arm setup](https://github.com/naviapps/sdk-tooling#windows-on-arm).
 
 ```powershell
-mise run sdk-tooling -- python distribution/verify_windows.py --architecture x64
+mise run sdk-tooling -- python distribution/verify_windows.py
 ```
 
 This verifies one x64 DLL through C ABI, .NET recovery, temporary current-user
@@ -486,8 +477,8 @@ retained under `.native-build/win-x64/<version>/` and, when configured, under
 `win-x64/<version>/` in `VM_RUNNER_ARTIFACTS_DIR`. The receipt records source,
 build helper hashes, .NET SDK version, execution architecture and verified bytes.
 
-On an owned x64 Windows worker with the Visual Studio C++ workload, append
-`--native-aot` to check Native AOT with JSON reflection disabled. The receipt
+On an owned x64 Windows worker, append `--native-aot` to check Native AOT with
+JSON reflection disabled. The receipt
 records success in `nativeAotFixtureExecuted`. Hosted Windows distribution also
 runs this Native AOT consumer before exporting the DLL for the combined package.
 The combined package runs the same activation, reopen, refresh and deactivation
