@@ -47,8 +47,6 @@ The SDK does not implement checkout, billing, merchant APIs or license issuance.
 - .NET 10. One NuGet package supplies `osx-arm64`, `osx-x64` and `win-x64`.
   Use x64 .NET under emulation on Windows 11 ARM64 (build 26100 or later).
 
-`Package.swift` exposes `SoftwareLicensing` and `SoftwareLicensingKeychain`.
-
 ## SwiftPM installation
 
 Create an empty `MyApp` directory and save the following as `Package.swift`.

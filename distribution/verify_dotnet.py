@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Run source and isolated NuGet licensing fixtures against the macOS artifact."""
 
-import os
 import platform
 import shutil
 import tempfile
 from pathlib import Path
 
 from sdk_tooling.adapters import load
+from sdk_tooling.dotnet import subprocess_environment
 from sdk_tooling.xcframework import xcframework
 
 from distribution.nuget import PACKAGE, check_package
@@ -15,13 +15,7 @@ from distribution.nuget import PACKAGE, check_package
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    env = dict(
-        os.environ,
-        DOTNET_CLI_TELEMETRY_OPTOUT="1",
-        DOTNET_NOLOGO="1",
-        DOTNET_CLI_USE_MSBUILD_SERVER="0",
-        MSBUILDDISABLENODEREUSE="1",
-    )
+    env = subprocess_environment()
     dotnet = env.get("DOTNET_BIN") or shutil.which("dotnet", path=env.get("PATH"))
     if not dotnet:
         raise SystemExit("Install .NET 10 or provide DOTNET_BIN")
