@@ -89,21 +89,8 @@ class WindowsOutputTests(unittest.TestCase):
             self.exercise_driver(Path(temporary), host="x64", retain=True, export=True)
 
     def test_export_does_not_accept_native_bytes_changed_after_validation(self):
-        driver = load_driver()
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            built = root / "built"
-            built.mkdir()
-            library = built / "software_licensing.dll"
-            library.write_bytes(b"accepted library")
-            tooling = artifacts()
-            inventory = tooling.hashes([library], built)
-            library.write_bytes(b"changed library")
-
-            output = root / "artifacts"
-            with self.assertRaisesRegex(ValueError, "differ from the accepted native build"):
-                driver.export_native(built, inventory, output, tooling)
-            self.assertEqual(tuple((output / "sdk-windows").iterdir()), ())
+            self.exercise_driver(Path(temporary), retain=True, export=True, change_native=True)
 
     def test_rejects_captured_source_for_a_different_actions_revision(self):
         driver = load_driver()
@@ -128,6 +115,7 @@ class WindowsOutputTests(unittest.TestCase):
         stale=False,
         retain=False,
         mutate=False,
+        change_native=False,
         change_tools=False,
         native_aot=False,
         export=False,
@@ -223,6 +211,8 @@ class WindowsOutputTests(unittest.TestCase):
             self.assertEqual(dll.read_bytes(), library.read_bytes())
             if mutate:
                 dll.write_bytes(b"changed after native fixture")
+            if change_native:
+                library.write_bytes(b"changed after native fixture")
             return package_hash
 
         managed.pack_project.side_effect = pack
@@ -273,6 +263,11 @@ class WindowsOutputTests(unittest.TestCase):
             arguments = ["--native-aot"] if native_aot else []
             if export:
                 arguments.append("--export-native")
+            if change_native:
+                with self.assertRaisesRegex(ValueError, "differ from the accepted build"):
+                    driver.main(arguments)
+                self.assertEqual(tuple((ci / "sdk-windows").iterdir()), ())
+                return
             driver.main(arguments)
 
         expected_environment = dict(environment)

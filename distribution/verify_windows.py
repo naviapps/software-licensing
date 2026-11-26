@@ -3,7 +3,6 @@
 
 import argparse
 import platform
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -12,7 +11,7 @@ from sdk_tooling.adapters import load, support_inputs
 from sdk_tooling.artifacts import file_sha256 as sha256
 from sdk_tooling.c_headers import prepare_generated
 from sdk_tooling.native_plan import ffi_product
-from sdk_tooling.windows_delivery import RID, TARGET, X64Acceptance, publish_x64
+from sdk_tooling.windows_delivery import RID, TARGET, X64Acceptance, export_native, publish_x64
 
 from distribution.nuget import PACKAGE, check_package
 
@@ -22,23 +21,6 @@ RECEIPT = "software-licensing-windows.json"
 
 def acceptance_source():
     return load("windows_delivery").acceptance_source(ROOT, match_actions=True)
-
-
-def export_native(built, inventory, artifact_root, artifacts):
-    destination = artifact_root / "sdk-windows" / RID
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if (
-        destination.exists()
-        or destination.is_symlink()
-        or not destination.parent.resolve().is_relative_to(artifact_root.resolve())
-    ):
-        raise ValueError("Windows native export requires a new directory inside the artifact root")
-    with tempfile.TemporaryDirectory(dir=destination.parent, prefix="native-export-") as directory:
-        staged = Path(directory) / RID
-        shutil.copytree(built, staged, symlinks=True)
-        if artifacts.hashes(artifacts.files(staged), staged) != inventory:
-            raise ValueError("Exported Windows files differ from the accepted native build")
-        staged.rename(destination)
 
 
 def main(argv=None):
@@ -176,7 +158,6 @@ def main(argv=None):
                     built,
                     native_receipt["outputs"] | {"native-build.json": receipt_digest},
                     artifact_root,
-                    artifacts,
                 )
         else:
             publish_x64(
