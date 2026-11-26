@@ -43,7 +43,7 @@ The SDK does not implement checkout, billing, merchant APIs or license issuance.
 ## Requirements
 
 - Swift 6.3 and macOS 26 or later. The universal framework supports ARM64 and Intel.
-- Rust 1.100.0. See `rust-toolchain.toml` and the locked registry dependencies.
+- Rust. Use the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml).
 - .NET 10. One NuGet package supplies `osx-arm64`, `osx-x64` and `win-x64`.
   Use x64 .NET under emulation on Windows 11 ARM64 (build 26100 or later).
 
@@ -424,6 +424,8 @@ checks source lint, Rust Clippy and tests, strict Swift tests, the managed lifec
 fixture and the standalone SwiftPM consumer. The `sdk-tooling` task in
 [`mise.toml`](mise.toml) pins the shared development tools to a public Git revision.
 Set `DEVELOPER_DIR` when Xcode is not the globally selected developer directory.
+Use `mise exec -- make lint` to check owned source and `mise exec -- make format`
+to format it.
 Run `mise exec -- make native` after changing the Rust FFI declarations.
 SDK Tooling generates the C header and module map under `crates/ffi/` and
 embeds both in the SwiftPM framework. To generate only these files, run
@@ -432,10 +434,10 @@ generated declarations against the framework.
 
 ## Development tooling
 
-GitHub Actions runs the same strict Swift tests and standalone Swift consumer
-on macOS 26 with Xcode 26.6 and macOS 27 with Xcode 27.2. Public Windows x64 CI
-runs Rust tests and exercises the .NET binding against a source-built DLL. These
-checks use synthetic fixture providers.
+The [shared CI workflow](.github/workflows/check.yml) runs the same strict Swift
+tests and standalone Swift consumer on macOS 26 and 27. Windows x64 CI runs Rust
+tests and exercises the .NET binding against a source-built DLL. These checks
+use synthetic fixture providers.
 
 ### Distribution checks
 
@@ -490,13 +492,6 @@ records success in `nativeAotFixtureExecuted`. Hosted Windows distribution also
 runs this Native AOT consumer before exporting the DLL for the combined package.
 The combined package runs the same activation, reopen, refresh and deactivation
 fixture after restore.
-
-## Static checks
-
-`mise install` prepares pinned developer tools. Run `mise run lint` before builds
-or `mise run format` to format owned source. Formatting excludes native artifacts
-and original notices. The check targets run compiler
-and native acceptance separately.
 
 ## License
 
